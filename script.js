@@ -314,8 +314,14 @@ const Parser = {
   },
 
   buildKey(rec) {
-    return `${rec.ano}-${rec.bo}-${rec.d}-${rec.h || '00:00'}`;
-  },
+    // Se não tem BO, usa um ID gerado
+    if (!rec.bo) {
+        return `${rec.d}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    
+    // Chave que garante unicidade: ano + BO + data + hora + tipo
+    return `${rec.ano}|${rec.bo}|${rec.d}|${rec.h || '00:00'}|${rec.tf}`;
+}
 
   parseRows(rows) {
     if (!rows || !rows.length) return { records: [], errors: [] };
