@@ -314,7 +314,7 @@ const Parser = {
   },
 
   buildKey(rec) {
-    return `${rec.ano}-${rec.bo}`;
+    return `${rec.ano}-${rec.bo}-${rec.d}-${rec.h || '00:00'}`;
   },
 
   parseRows(rows) {
