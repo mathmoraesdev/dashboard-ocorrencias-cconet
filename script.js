@@ -313,14 +313,12 @@ const Parser = {
     };
   },
 
+  let _rowCounter = 0;
+  
   buildKey(rec) {
-    // Se não tem BO, usa um ID gerado
-    if (!rec.bo) {
-        return `${rec.d}-${Math.random().toString(36).slice(2, 8)}`;
-    }
-    
-    // Chave que garante unicidade: ano + BO + data + hora + tipo
-    return `${rec.ano}|${rec.bo}|${rec.d}|${rec.h || '00:00'}|${rec.tf}`;
+    _rowCounter++;
+    // Usa o contador para garantir unicidade
+    return `${rec.ano}|${rec.bo}|${rec.d}|${rec.h || '00:00'}|${_rowCounter}`;
 }
 
   parseRows(rows) {
