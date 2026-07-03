@@ -226,6 +226,9 @@ function csvEscape(s) {
   return /[;"\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
 }
 
+// Variable for unique row keys inside closure scope
+let _rowCounter = 0;
+
 // ============================================================
 // 5. PARSER DE DADOS
 // ============================================================
@@ -244,7 +247,6 @@ const Parser = {
     if (!s) return '';
     const datePart = String(s).trim().split(' ')[0];
 
-    // dd/mm/yyyy ou dd/mm/yyyy hh:mm
     if (datePart.includes('/')) {
       const p = datePart.split('/');
       if (p.length === 3) {
@@ -253,7 +255,6 @@ const Parser = {
       }
     }
 
-    // yyyy-mm-dd
     if (datePart.includes('-')) {
       const p = datePart.split('-');
       if (p.length === 3) {
@@ -312,14 +313,11 @@ const Parser = {
       vtr: pick('vtr principal')
     };
   },
-
-  let _rowCounter = 0;
   
   buildKey(rec) {
     _rowCounter++;
-    // Usa o contador para garantir unicidade
     return `${rec.ano}|${rec.bo}|${rec.d}|${rec.h || '00:00'}|${_rowCounter}`;
-}
+  },
 
   parseRows(rows) {
     if (!rows || !rows.length) return { records: [], errors: [] };
@@ -374,7 +372,6 @@ const DataLoader = {
 
       let csvText = await response.text();
 
-      // Remover BOM
       if (csvText.charCodeAt(0) === 0xFEFF) {
         csvText = csvText.slice(1);
       }
@@ -406,7 +403,7 @@ const DataLoader = {
 
       UI.setSyncStatus('ok', `Atualizado: ${new Date().toLocaleString('pt-BR')}`);
       if (showToast) {
-        UI.showToast('Dados atualizados', `${fmtInt(state.all.length)} registros carregados`, false);
+        UI.showToast('Dados updated', `${fmtInt(state.all.length)} registros carregados`, false);
       }
 
       return merged;
@@ -422,62 +419,37 @@ const DataLoader = {
   },
 
   mergeRecords(records) {
+    // Reseta os buckets atuais para carregar a versão mais recente da planilha na íntegra
+    state.monthBuckets = {};
+    
     const byMonth = {};
     for (const rec of records) {
       const mk = rec.d.slice(0, 7);
       (byMonth[mk] = byMonth[mk] || []).push(rec);
     }
 
-    let added = 0, updated = 0, noKeyCount = 0;
-
     for (const mk of Object.keys(byMonth)) {
-      const existingArr = state.monthBuckets[mk] ? state.monthBuckets[mk].slice() : [];
-      const map = new Map();
-      for (const r of existingArr) {
-        map.set(Parser.buildKey(r), r);
-      }
-
-      for (const rec of byMonth[mk]) {
-        let key;
-        if (rec.bo) {
-          key = Parser.buildKey(rec);
-        } else {
-          noKeyCount++;
-          key = `${mk}-nobo-${noKeyCount}-${Math.random().toString(36).slice(2, 7)}`;
-        }
-
-        if (map.has(key)) {
-          const prev = map.get(key);
-          const same = prev.d === rec.d && prev.h === rec.h &&
-            prev.tf === rec.tf && prev.b === rec.b && prev.r === rec.r;
-          if (!same) updated++;
-        } else {
-          added++;
-        }
-        map.set(key, rec);
-      }
-
-      state.monthBuckets[mk] = Array.from(map.values());
+      state.monthBuckets[mk] = byMonth[mk];
     }
 
-    // Reconstruir array all
+    // Reconstruir o array completo do estado global com todos os dados
     this.rebuildAll();
 
-    // Registrar no histórico
+    // Registrar no histórico de sincronização da modal
     const entry = {
       filename: 'Google Sheets',
       timestamp: new Date().toISOString(),
-      added,
-      updated,
+      added: records.length,
+      updated: 0,
       months: Object.keys(byMonth).sort()
     };
     state.uploadLog = [entry, ...state.uploadLog].slice(0, 20);
     state.lastSync = new Date().toISOString();
 
-    // Atualizar metadados
+    // Atualizar metadados dos filtros
     Metadata.refresh();
 
-    return { added, updated };
+    return { added: records.length, updated: 0 };
   },
 
   rebuildAll() {
@@ -531,22 +503,12 @@ const Filters = {
     const { dateFrom, dateTo, tipos, bairros, regional, natureza } = state.filters;
 
     state.filtered = state.all.filter(r => {
-      // Filtro de data
       if (dateFrom && r.d < dateFrom) return false;
       if (dateTo && r.d > dateTo) return false;
-      
-      // Filtro de regional
       if (regional && r.r !== regional) return false;
-      
-      // Filtro de natureza
       if (natureza && r.nat !== natureza) return false;
-      
-      // Filtro de tipo - null = todos, Set = apenas os selecionados
       if (tipos !== null && !tipos.has(r.tf)) return false;
-      
-      // Filtro de bairro - null = todos, Set = apenas os selecionados
       if (bairros !== null && !bairros.has(r.b)) return false;
-      
       return true;
     });
 
@@ -568,15 +530,13 @@ const Filters = {
   reset() {
     const [minD, maxD] = getDateRange(state.all);
     
-    // Resetar todos os filtros
     state.filters.dateFrom = minD || null;
     state.filters.dateTo = maxD || null;
-    state.filters.tipos = null;          // null = todos selecionados
-    state.filters.bairros = null;        // null = todos selecionados
+    state.filters.tipos = null;
+    state.filters.bairros = null;
     state.filters.regional = '';
     state.filters.natureza = null;
 
-    // Sincronizar UI - campos de data
     const dateFromEl = document.getElementById('dateFrom');
     const dateToEl = document.getElementById('dateTo');
     const regionalEl = document.getElementById('regionalSelect');
@@ -585,10 +545,7 @@ const Filters = {
     if (dateToEl) dateToEl.value = maxD || '';
     if (regionalEl) regionalEl.value = '';
 
-    // Reconstruir checklists e atualizar contadores
     FilterUI.refreshChecklists();
-
-    // Aplicar filtros e renderizar
     Dashboard.render();
   },
 
@@ -597,7 +554,6 @@ const Filters = {
     state.filters.dateTo = to;
   },
   
-  // Utilitário para verificar se um filtro está ativo
   isFilterActive(key) {
     const value = state.filters[key];
     if (key === 'regional') return value !== '';
@@ -613,7 +569,6 @@ const Filters = {
 
 const FilterUI = {
   refreshOptions() {
-    // Regional select
     const regSel = document.getElementById('regionalSelect');
     if (!regSel) return;
     
@@ -634,7 +589,6 @@ const FilterUI = {
       regSel.value = currentVal;
     }
 
-    // Rebuild checklists
     this.refreshChecklists();
   },
 
@@ -648,16 +602,10 @@ const FilterUI = {
     const container = document.getElementById(listId);
     if (!container) return;
     
-    // Obter o conjunto ativo
     let activeSet = target === 'tipo' ? state.filters.tipos : state.filters.bairros;
-    
-    // Se for null, significa "todos selecionados" - criar um Set com todos os nomes
     const allNames = new Set(countsMap.keys());
     const isAllSelected = (activeSet === null);
-    
-    // Para exibição, usamos o conjunto real ou o conjunto de todos
     const displaySet = isAllSelected ? allNames : activeSet;
-    
     const sorted = Array.from(countsMap.entries()).sort((a, b) => b[1] - a[1]);
 
     const frag = document.createDocumentFragment();
@@ -696,20 +644,12 @@ const FilterUI = {
 
     if (tipoEl) {
       const tipoSet = state.filters.tipos;
-      if (tipoSet === null) {
-        tipoEl.textContent = 'todos';
-      } else {
-        tipoEl.textContent = `${tipoSet.size} sel.`;
-      }
+      tipoEl.textContent = tipoSet === null ? 'todos' : `${tipoSet.size} sel.`;
     }
     
     if (bairroEl) {
       const bairroSet = state.filters.bairros;
-      if (bairroSet === null) {
-        bairroEl.textContent = 'todos';
-      } else {
-        bairroEl.textContent = `${bairroSet.size} sel.`;
-      }
+      bairroEl.textContent = bairroSet === null ? 'todos' : `${bairroSet.size} sel.`;
     }
   },
 
@@ -717,7 +657,6 @@ const FilterUI = {
     const key = target === 'tipo' ? 'tipos' : 'bairros';
     const allNames = new Set((target === 'tipo' ? caches.tipoCounts : caches.bairroCounts).keys());
 
-    // Se current é null, começar com todos os nomes
     let cur = state.filters[key];
     if (cur === null) {
       cur = new Set(allNames);
@@ -731,7 +670,6 @@ const FilterUI = {
       cur.delete(name);
     }
 
-    // Se todos estão selecionados, guardar como null para economizar memória
     state.filters[key] = (cur.size === allNames.size) ? null : cur;
 
     this.updateCounts();
@@ -742,12 +680,11 @@ const FilterUI = {
     const key = target === 'tipo' ? 'tipos' : 'bairros';
     
     if (mode === 'all') {
-      state.filters[key] = null; // null = todos selecionados
+      state.filters[key] = null;
     } else {
-      state.filters[key] = new Set(); // vazio = nenhum selecionado
+      state.filters[key] = new Set();
     }
 
-    // Reconstruir a lista visual
     this.buildList(
       target === 'tipo' ? 'tipoList' : 'bairroList',
       target === 'tipo' ? caches.tipoCounts : caches.bairroCounts,
@@ -838,7 +775,7 @@ const UI = {
       const label = entry.filename || 'Sincronização';
       row.innerHTML = `
         <span class="f">${escapeHtml(label)} · ${dtLabel}</span>
-        <span class="c">+${fmtInt(entry.added || 0)} / ~${fmtInt(entry.updated || 0)}</span>
+        <span class="c">${fmtInt(entry.added || 0)} registros</span>
       `;
       list.appendChild(row);
     }
@@ -871,37 +808,7 @@ const KPI = {
     const days = countDaysInRange(state.filters.dateFrom, state.filters.dateTo);
     const avg = days > 0 ? total / days : 0;
     document.getElementById('kpiAvg').textContent = avg.toFixed(1).replace('.', ',');
-    document.getElementById('kpiAvgSub').textContent = days > 0 ? `em ${fmtInt(days)} dias` : 'ocorrências / dia';
-
-    // Horário de pico
-    const hourCounts = Array(24).fill(0);
-    for (const r of filtered) {
-      if (r.h) {
-        const hh = parseInt(r.h.slice(0, 2), 10);
-        if (!isNaN(hh)) hourCounts[hh]++;
-      }
-    }
-
-    let peakH = 0, peakV = -1;
-    for (let h = 0; h < 24; h++) {
-      if (hourCounts[h] > peakV) { peakV = hourCounts[h]; peakH = h; }
-    }
-    document.getElementById('kpiPeakHour').textContent = total ? `${String(peakH).padStart(2, '0')}:00` : '—';
-    document.getElementById('kpiPeakHourSub').textContent = total ? `${fmtInt(peakV)} ocorrências` : '—';
-
-    // Top bairro
-    const bCounts = groupBy(filtered, r => r.b);
-    const bSorted = Array.from(bCounts.entries()).sort((a, b) => b[1] - a[1]);
-    document.getElementById('kpiTopBairro').textContent = bSorted.length ? titleCase(bSorted[0][0]) : '—';
-    document.getElementById('kpiTopBairroSub').textContent = bSorted.length ? `${fmtInt(bSorted[0][1])} ocorrências` : '—';
-
-    // Top tipo
-    const tCounts = groupBy(filtered, r => r.tf);
-    const tSorted = Array.from(tCounts.entries()).sort((a, b) => b[1] - a[1]);
-    const topTipoEl = document.getElementById('kpiTopTipo');
-    topTipoEl.textContent = tSorted.length ? titleCase(tSorted[0][0]) : '—';
-    topTipoEl.title = tSorted.length ? tSorted[0][0] : '';
-    document.getElementById('kpiTopTipoSub').textContent = tSorted.length ? `${fmtInt(tSorted[0][1])} ocorrências` : '—';
+    document.getElementById('kpiAvgSub').textContent = days > 0 ? `em ${fmtInt(days)} dias` : '—';
   }
 };
 
@@ -910,11 +817,32 @@ const KPI = {
 // ============================================================
 
 const Timeline = {
-  render(filtered) {
-    const gran = state.view.granularity;
-    const ctx = document.getElementById('timelineChart').getContext('2d');
+  buildDailySeries(filtered, from, to) {
+    if (!from || !to) return [];
+    const map = groupBy(filtered, r => r.d);
+    const series = [];
+    let cur = parseISODate(from);
+    const end = parseISODate(to);
 
-    let labels, dataPoints, maPoints = null, type = 'line';
+    while (cur <= end) {
+      const iso = toISODate(cur);
+      series.push({ d: iso, c: map.get(iso) || 0 });
+      cur = addDays(cur, 1);
+    }
+    return series;
+  },
+
+  render(filtered) {
+    const canvas = document.getElementById('timelineChart');
+    if (!canvas) return;
+
+    if (chartInstances.timeline) {
+      chartInstances.timeline.destroy();
+    }
+
+    const gran = state.view.granularity;
+    let labels = [], dataPoints = [], maPoints = [];
+    let type = 'line';
 
     if (gran === 'day') {
       const series = this.buildDailySeries(filtered, state.filters.dateFrom, state.filters.dateTo);
@@ -960,81 +888,30 @@ const Timeline = {
       });
     }
 
-    if (chartInstances.timeline) {
-      chartInstances.timeline.destroy();
-    }
-
-    chartInstances.timeline = new Chart(ctx, {
+    chartInstances.timeline = new Chart(canvas.getContext('2d'), {
       type,
       data: { labels, datasets },
-      options: this.chartOptions()
-    });
-  },
-
-  buildDailySeries(filtered, fromISO, toISO) {
-    if (!fromISO || !toISO || fromISO > toISO) return [];
-
-    const counts = groupBy(filtered, r => r.d);
-    const days = [];
-    let cur = parseISODate(fromISO);
-    const end = parseISODate(toISO);
-    let guard = 0;
-
-    while (cur <= end && guard < 4000) {
-      const iso = toISODate(cur);
-      days.push({ d: iso, c: counts.get(iso) || 0 });
-      cur = addDays(cur, 1);
-      guard++;
-    }
-
-    return days;
-  },
-
-  chartOptions() {
-    return {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: {
-          display: true,
-          labels: {
-            color: '#a9b8c4',
-            boxWidth: 10,
-            font: { family: "'Inter', sans-serif", size: 11 }
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#0a1218',
+            borderColor: '#24333f',
+            borderWidth: 1,
+            titleColor: '#e7edf2',
+            bodyColor: '#e7edf2',
+            titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+            bodyFont: { family: "'JetBrains Mono', monospace", size: 11 }
           }
         },
-        tooltip: {
-          backgroundColor: '#0a1218',
-          borderColor: '#24333f',
-          borderWidth: 1,
-          titleColor: '#e7edf2',
-          bodyColor: '#e7edf2',
-          padding: 10,
-          titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
-          bodyFont: { family: "'JetBrains Mono', monospace", size: 11 }
-        }
-      },
-      scales: {
-        x: {
-          grid: { color: '#1c2a35', drawTicks: false },
-          ticks: {
-            color: '#6f8190',
-            font: { family: "'JetBrains Mono', monospace", size: 10 },
-            maxRotation: 0,
-            maxTicksLimit: 14
-          }
-        },
-        y: {
-          grid: { color: '#1c2a35' },
-          ticks: {
-            color: '#6f8190',
-            font: { family: "'JetBrains Mono', monospace", size: 10 }
-          },
-          beginAtZero: true
+        scales: {
+          x: { grid: { color: '#1c2a35' }, ticks: { maxRotation: 0, font: { size: 10 } } },
+          y: { grid: { color: '#1c2a35' }, ticks: { font: { size: 10 } }, beginAtZero: true }
         }
       }
-    };
+    });
   }
 };
 
@@ -1045,10 +922,10 @@ const Timeline = {
 const Heatmap = {
   render(filtered) {
     const grid = document.getElementById('heatGrid');
+    if (!grid) return;
     grid.innerHTML = '';
-
-    // Cabeçalho com horas
     grid.appendChild(document.createElement('div'));
+
     for (let h = 0; h < 24; h++) {
       const lbl = document.createElement('div');
       lbl.className = 'heat-hourlabel';
@@ -1056,7 +933,6 @@ const Heatmap = {
       grid.appendChild(lbl);
     }
 
-    // Contar ocorrências por dia da semana e hora
     const counts = Array.from({ length: 7 }, () => Array(24).fill(0));
     for (const r of filtered) {
       if (!r.h) continue;
@@ -1072,7 +948,6 @@ const Heatmap = {
       }
     }
 
-    // Renderizar células
     for (let d = 0; d < 7; d++) {
       const dayLbl = document.createElement('div');
       dayLbl.className = 'heat-daylabel';
@@ -1084,50 +959,21 @@ const Heatmap = {
         const cell = document.createElement('div');
         cell.className = 'heat-cell';
         cell.style.background = this.getColor(v, max);
-
         cell.addEventListener('mousemove', (e) => {
-          this.showTooltip(e, `${WEEKDAYS_PT[d]} ${String(h).padStart(2, '0')}h — <b>${fmtInt(v)}</b> ocorrência(s)`);
+          this.showTooltip(e, `${WEEKDAYS_PT[d]} ${String(h).padStart(2, '0')}h — <b>${fmtInt(v)}</b>`);
         });
-        cell.addEventListener('mouseleave', this.hideTooltip);
+        cell.addEventListener('mouseleave', () => this.hideTooltip());
         grid.appendChild(cell);
       }
     }
 
-    // Estatísticas
-    this.renderStats(counts, filtered);
-  },
-
-  getColor(v, max) {
-    if (max <= 0 || v <= 0) return 'var(--surface-2)';
-    const t = v / max;
-    const stops = [
-      [0.0, CONFIG.HEATMAP_COLORS[0]],
-      [0.35, CONFIG.HEATMAP_COLORS[1]],
-      [0.65, CONFIG.HEATMAP_COLORS[2]],
-      [0.85, CONFIG.HEATMAP_COLORS[3]],
-      [1.0, CONFIG.HEATMAP_COLORS[4]]
-    ];
-
-    for (let i = 0; i < stops.length - 1; i++) {
-      const [t0, c0] = stops[i];
-      const [t1, c1] = stops[i + 1];
-      if (t >= t0 && t <= t1) {
-        const f = (t - t0) / (t1 - t0);
-        const c = c0.map((v0, idx) => Math.round(v0 + f * (c1[idx] - v0)));
-        return `rgb(${c[0]},${c[1]},${c[2]})`;
-      }
-    }
-    return 'rgb(232,168,74)';
-  },
-
-  renderStats(counts, filtered) {
-    let peakVal = -1, peakD = 0, peakH = 0;
+    let peakH = 0, peakD = 0, peakVal = 0;
     for (let d = 0; d < 7; d++) {
       for (let h = 0; h < 24; h++) {
         if (counts[d][h] > peakVal) {
           peakVal = counts[d][h];
-          peakD = d;
           peakH = h;
+          peakD = d;
         }
       }
     }
@@ -1152,21 +998,38 @@ const Heatmap = {
     document.getElementById('heatQuiet').textContent = filtered.length ? `${String(minH).padStart(2, '0')}:00` : '—';
   },
 
+  getColor(v, max) {
+    if (!v) return 'rgb(22, 35, 44)';
+    if (!max) return 'rgb(22, 35, 44)';
+    const pct = v / max;
+    const colors = CONFIG.HEATMAP_COLORS;
+    const idx = Math.min(Math.floor(pct * (colors.length - 1)), colors.length - 2);
+    const c1 = colors[idx], c2 = colors[idx + 1];
+    const base = idx / (colors.length - 1);
+    const range = 1 / (colors.length - 1);
+    const f = (pct - base) / range;
+
+    const r = Math.round(c1[0] + (c2[0] - c1[0]) * f);
+    const g = Math.round(c1[1] + (c2[1] - c1[1]) * f);
+    const b = Math.round(c1[2] + (c2[2] - c1[2]) * f);
+    return `rgb(${r},${g},${b})`;
+  },
+
   showTooltip(e, html) {
     const el = document.getElementById('floatTooltip');
+    if (!el) return;
     el.innerHTML = html;
     el.style.display = 'block';
-
     let x = e.clientX + 14, y = e.clientY + 14;
-    const vw = window.innerWidth, vh = window.innerHeight;
-    if (x + 180 > vw) x = e.clientX - 190;
-    if (y + 60 > vh) y = e.clientY - 60;
+    if (x + 180 > window.innerWidth) x = e.clientX - 190;
+    if (y + 60 > window.innerHeight) y = e.clientY - 60;
     el.style.left = x + 'px';
     el.style.top = y + 'px';
   },
 
   hideTooltip() {
-    document.getElementById('floatTooltip').style.display = 'none';
+    const el = document.getElementById('floatTooltip');
+    if (el) el.style.display = 'none';
   }
 };
 
@@ -1179,6 +1042,7 @@ const Ranking = {
     const counts = groupBy(filtered, keyFn);
     const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
     const container = document.getElementById(containerId);
+    if (!container) return;
     container.innerHTML = '';
 
     if (!sorted.length) {
@@ -1188,48 +1052,46 @@ const Ranking = {
 
     const top = sorted.slice(0, topN);
     const restSum = sorted.slice(topN).reduce((s, e) => s + e[1], 0);
-    const maxVal = top.length ? top[0][1] : 0;
+    const maxVal = sorted[0][1];
 
+    const frag = document.createDocumentFragment();
     for (const [name, count] of top) {
+      const p = maxVal > 0 ? (count / maxVal * 100) : 0;
       const row = document.createElement('div');
-      row.className = 'rankbar-row' + (activeSet && activeSet.has(name) && activeSet.size === 1 ? ' active' : '');
+      row.className = 'rank-row';
+      if (activeSet && activeSet.has(name)) row.classList.add('active');
+
       row.innerHTML = `
-        <div class="rankbar-top">
-          <span class="name" title="${escapeHtml(name)}">${escapeHtml(titleCase(name))}</span>
-          <span class="val">${fmtInt(count)}</span>
+        <div class="rank-info">
+          <span class="n">${escapeHtml(titleCase(name))}</span>
+          <span class="v">${fmtInt(count)}</span>
         </div>
-        <div class="rankbar-track">
-          <div class="rankbar-fill" style="width:${maxVal ? (count / maxVal * 100) : 0}%"></div>
-        </div>
+        <div class="rank-bar-bg"><div class="rank-bar" style="width:${p}%"></div></div>
       `;
-      row.addEventListener('click', () => onClick(name));
-      container.appendChild(row);
+
+      if (onClick) {
+        row.addEventListener('click', () => onClick(name));
+      }
+      frag.appendChild(row);
     }
 
     if (restSum > 0) {
       const row = document.createElement('div');
-      row.className = 'rankbar-row';
+      row.className = 'rank-row rest';
       row.innerHTML = `
-        <div class="rankbar-top">
-          <span class="name" style="color:var(--text-dim)">Outros (${sorted.length - topN})</span>
-          <span class="val">${fmtInt(restSum)}</span>
-        </div>
-        <div class="rankbar-track">
-          <div class="rankbar-fill" style="width:${maxVal ? (restSum / maxVal * 100) : 0}%; opacity:0.4"></div>
+        <div class="rank-info">
+          <span class="n">Outros (${sorted.length - topN})</span>
+          <span class="v">${fmtInt(restSum)}</span>
         </div>
       `;
-      container.appendChild(row);
+      frag.appendChild(row);
     }
+
+    container.appendChild(frag);
   },
 
   emptyState() {
-    return `<div class="empty-state">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <circle cx="12" cy="12" r="9"/>
-        <path d="M9 9l6 6M15 9l-6 6"/>
-      </svg>
-      <p>Nenhum dado para os filtros atuais.</p>
-    </div>`;
+    return `<div style="color:var(--text-dim); font-size:12px; padding:20px; text-align:center;">Nenhum registro</div>`;
   }
 };
 
@@ -1241,12 +1103,11 @@ const Natureza = {
   render(filtered) {
     const counts = groupBy(filtered, r => r.nat);
     const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-
     const labels = sorted.map(s => s[0]);
     const data = sorted.map(s => s[1]);
     const colors = labels.map((_, i) => CONFIG.NATUREZA_COLORS[i % CONFIG.NATUREZA_COLORS.length]);
-
     const canvas = document.getElementById('naturezaChart');
+    if (!canvas) return;
 
     if (chartInstances.natureza) {
       chartInstances.natureza.destroy();
@@ -1261,12 +1122,7 @@ const Natureza = {
       type: 'doughnut',
       data: {
         labels,
-        datasets: [{
-          data,
-          backgroundColor: colors,
-          borderColor: '#141f2a',
-          borderWidth: 2
-        }]
+        datasets: [{ data, backgroundColor: colors, borderColor: '#141f2a', borderWidth: 2 }]
       },
       options: {
         responsive: true,
@@ -1293,7 +1149,6 @@ const Natureza = {
       }
     });
 
-    // Legend
     const legend = document.getElementById('naturezaLegend');
     legend.innerHTML = '';
     const total = data.reduce((a, b) => a + b, 0);
@@ -1307,7 +1162,7 @@ const Natureza = {
       row.innerHTML = `
         <span class="sw" style="background:${colors[i]}"></span>
         <span class="lname">${escapeHtml(lab)}</span>
-        <span class="lval">${total ? Math.round(data[i] / total * 100) : 0}%</span>
+        <span class="lval">${total ? (data[i] / total * 100).toFixed(0) : 0}%</span>
       `;
       row.addEventListener('click', () => this.onClick(lab));
       legend.appendChild(row);
@@ -1315,44 +1170,41 @@ const Natureza = {
   },
 
   onClick(name) {
-    state.filters.natureza = (state.filters.natureza === name) ? null : name;
+    state.filters.natureza = state.filters.natureza === name ? null : name;
     Dashboard.render();
   }
 };
 
 // ============================================================
-// 16. MONTH TABLE RENDERER
+// 16. TABELA MENSAL RENDERER
 // ============================================================
 
 const MonthTable = {
   render() {
-    const filtered = Filters.applyIgnoringDate();
-    const byMonth = {};
-    for (const r of filtered) {
-      const mk = r.d.slice(0, 7);
-      (byMonth[mk] = byMonth[mk] || []).push(r);
-    }
-
-    const keys = Object.keys(byMonth).sort();
     const tbody = document.getElementById('monthTableBody');
+    if (!tbody) return;
     tbody.innerHTML = '';
-    document.getElementById('monthHint').textContent = keys.length ? `${keys.length} mês(es)` : '';
 
-    if (!keys.length) {
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding:20px;">Sem dados</td></tr>`;
-      return;
-    }
-
+    const months = Object.keys(state.monthBuckets).sort();
     let prevTotal = null;
-    for (const mk of keys) {
-      const arr = byMonth[mk];
-      const total = arr.length;
-      const tfCounts = groupBy(arr, r => r.tf);
-      const topTf = Array.from(tfCounts.entries()).sort((a, b) => b[1] - a[1])[0];
 
-      let deltaHtml = '<span style="color:var(--text-dim)">—</span>';
+    for (const mk of months) {
+      const allMonthRows = state.monthBuckets[mk];
+      const filtered = allMonthRows.filter(r => {
+        if (state.filters.tipos !== null && !state.filters.tipos.has(r.tf)) return false;
+        if (state.filters.bairros !== null && !state.filters.bairros.has(r.b)) return false;
+        if (state.filters.regional && r.r !== state.filters.regional) return false;
+        if (state.filters.natureza && r.nat !== state.filters.natureza) return false;
+        return true;
+      });
+
+      const total = filtered.length;
+      const tfs = groupBy(filtered, r => r.tf);
+      const topTf = Array.from(tfs.entries()).sort((a, b) => b[1] - a[1])[0];
+
+      let deltaHtml = '—';
       if (prevTotal !== null && prevTotal > 0) {
-        const pct = (total - prevTotal) / prevTotal * 100;
+        const pct = ((total - prevTotal) / prevTotal) * 100;
         const sign = pct >= 0 ? '+' : '';
         deltaHtml = `<span class="${pct >= 0 ? 'delta-up' : 'delta-down'}">${sign}${pct.toFixed(0)}%</span>`;
       }
@@ -1376,11 +1228,10 @@ const MonthTable = {
 
 const Comparativo = {
   render() {
-    const filtered = state.filtered;
     const allData = state.all;
     const hint = document.getElementById('compHint');
+    if (!hint) return;
 
-    // Detectar anos presentes nos dados
     const anos = new Set();
     for (const r of allData) {
       anos.add(r.ano);
@@ -1392,14 +1243,15 @@ const Comparativo = {
       document.getElementById('compKpis').innerHTML = '';
       document.getElementById('compTipoList').innerHTML = Ranking.emptyState();
       document.getElementById('compBairroList').innerHTML = Ranking.emptyState();
-      if (chartInstances.compMonth) { chartInstances.compMonth.destroy(); chartInstances.compMonth = null; }
-      if (chartInstances.compHour) { chartInstances.compHour.destroy(); chartInstances.compHour = null; }
+      if (chartInstances.compMonth) chartInstances.compMonth.destroy();
+      if (chartInstances.compHour) chartInstances.compHour.destroy();
       return;
     }
 
     const anoBase = anosArray[0];
     const anoCurr = anosArray[anosArray.length - 1];
     const mesesPresentes = new Set();
+
     for (const r of allData) {
       if (r.ano === anoCurr) {
         mesesPresentes.add(monthOf(r.d));
@@ -1409,50 +1261,35 @@ const Comparativo = {
     const rangeLbl = this.monthRangeLabel(mesesPresentes);
     hint.textContent = `mesmo período (${rangeLbl}) comparado entre ${anoBase} e ${anoCurr}`;
 
-    // Atualizar labels
     document.getElementById('legendYearBase').textContent = anoBase;
     document.getElementById('legendYearCurr').textContent = anoCurr;
     document.getElementById('tipoCompYearsLabel').textContent = `${anoBase} vs ${anoCurr}`;
     document.getElementById('bairroCompYearsLabel').textContent = `${anoBase} vs ${anoCurr}`;
-    document.getElementById('hourCompYearsLabel').textContent = `${anoBase} vs ${anoCurr}`;
 
-    // Dados filtrados por período
-    const dataBase = allData.filter(r =>
-      r.ano === anoBase && mesesPresentes.has(monthOf(r.d))
-    );
-    const dataCurr = allData.filter(r =>
-      r.ano === anoCurr && mesesPresentes.has(monthOf(r.d))
-    );
+    const dataIgnDate = Filters.applyIgnoringDate();
+    const dataBase = dataIgnDate.filter(r => r.ano === anoBase && mesesPresentes.has(monthOf(r.d)));
+    const dataCurr = dataIgnDate.filter(r => r.ano === anoCurr);
 
-    const totalBase = dataBase.length;
-    const totalCurr = dataCurr.length;
+    const totBase = dataBase.length;
+    const totCurr = dataCurr.length;
 
-    // KPIs
-    const delta = totalBase > 0 ? ((totalCurr - totalBase) / totalBase * 100) : null;
-    const kpisHtml = [
-      this.kpiCell(`${anoBase} · completo`, fmtInt(allData.filter(r => r.ano === anoBase).length), 'ano completo'),
-      this.kpiCell(`${anoBase} · ${rangeLbl}`, fmtInt(totalBase), 'mesmo período'),
-      this.kpiCell(`${anoCurr} · ${rangeLbl}`, fmtInt(totalCurr), 'dados carregados'),
-      this.kpiCell('Variação', delta === null ? '—' : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%`,
-        'base vs atual', delta === null ? '' : (delta >= 0 ? 'delta-up' : 'delta-down'))
-    ].join('');
-    document.getElementById('compKpis').innerHTML = kpisHtml;
+    let deltaHtml = '—', deltaClass = '';
+    if (totBase > 0) {
+      const pct = ((totCurr - totBase) / totBase) * 100;
+      deltaClass = pct >= 0 ? 'delta-up' : 'delta-down';
+      deltaHtml = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+    }
 
-    // Gráfico mensal
+    document.getElementById('compKpis').innerHTML = `
+      ${this.kpiCell(String(anoBase), fmtInt(totBase), 'total no período')}
+      ${this.kpiCell(String(anoCurr), fmtInt(totCurr), 'total no período')}
+      ${this.kpiCell('Variação', deltaHtml, 'entre períodos', deltaClass)}
+    `;
+
     this.renderMonthChart(dataBase, dataCurr, anoBase, anoCurr, mesesPresentes);
-
-    // Rankings
-    this.renderCompRank('compTipoList',
-      groupBy(dataCurr, r => r.tf),
-      groupBy(dataBase, r => r.tf)
-    );
-    this.renderCompRank('compBairroList',
-      groupBy(dataCurr, r => r.b),
-      groupBy(dataBase, r => r.b)
-    );
-
-    // Distribuição horária
     this.renderHourChart(dataBase, dataCurr, anoBase, anoCurr);
+    this.renderCompRank('compTipoList', dataBase, dataCurr, r => r.tf);
+    this.renderCompRank('compBairroList', dataBase, dataCurr, r => r.b);
   },
 
   monthRangeLabel(monthSet) {
@@ -1473,8 +1310,8 @@ const Comparativo = {
   renderMonthChart(dataBase, dataCurr, anoBase, anoCurr, mesesPresentes) {
     const mBase = groupBy(dataBase, r => monthOf(r.d));
     const mCurr = groupBy(dataCurr, r => monthOf(r.d));
-
     const dataBaseArr = [], dataCurrArr = [];
+
     for (let m = 1; m <= 12; m++) {
       dataBaseArr.push(mBase.get(m) || 0);
       dataCurrArr.push(mesesPresentes.has(m) ? (mCurr.get(m) || 0) : null);
@@ -1490,99 +1327,27 @@ const Comparativo = {
       data: {
         labels: MONTHS_PT,
         datasets: [
-          {
-            label: String(anoBase),
-            data: dataBaseArr,
-            backgroundColor: 'rgba(232,168,74,0.55)',
-            borderRadius: 3,
-            borderWidth: 0,
-            maxBarThickness: 26
-          },
-          {
-            label: String(anoCurr),
-            data: dataCurrArr,
-            backgroundColor: 'rgba(63,184,171,0.85)',
-            borderRadius: 3,
-            borderWidth: 0,
-            maxBarThickness: 26
-          }
+          { label: String(anoBase), data: dataBaseArr, backgroundColor: 'rgba(232,168,74,0.55)', borderRadius: 3, maxBarThickness: 26 },
+          { label: String(anoCurr), data: dataCurrArr, backgroundColor: 'rgba(63,184,171,0.55)', borderRadius: 3, maxBarThickness: 26 }
         ]
       },
       options: this.chartOptions()
     });
   },
 
-  renderCompRank(containerId, countsCurr, countsBase, topN = 8) {
-    const container = document.getElementById(containerId);
-    const sorted = Array.from(countsCurr.entries()).sort((a, b) => b[1] - a[1]).slice(0, topN);
-
-    if (!sorted.length) {
-      container.innerHTML = Ranking.emptyState();
-      return;
-    }
-
-    const maxVal = Math.max(...sorted.map(([name, c]) => Math.max(c, countsBase.get(name) || 0)), 1);
-    let html = '';
-
-    for (const [name, cCurr] of sorted) {
-      const cBase = countsBase.get(name) || 0;
-      const delta = cBase > 0 ? ((cCurr - cBase) / cBase * 100) : (cCurr > 0 ? null : 0);
-
-      let deltaHtml = '<span class="delta">—</span>';
-      if (delta === null && cCurr > 0) {
-        deltaHtml = '<span class="delta delta-new">novo</span>';
-      } else if (delta !== null) {
-        const sign = delta >= 0 ? '+' : '';
-        const cls = delta >= 0 ? 'delta-up' : 'delta-down';
-        deltaHtml = `<span class="delta ${cls}">${sign}${delta.toFixed(0)}%</span>`;
-      }
-
-      html += `
-        <div class="comp-row">
-          <div class="comp-row-head">
-            <span class="name" title="${escapeHtml(name)}">${escapeHtml(titleCase(name))}</span>
-            ${deltaHtml}
-          </div>
-          <div class="comp-bars">
-            <div class="comp-bar-line">
-              <span class="tag">${Object.keys(state.meta.regionais).length > 0 ? 'base' : '—'}</span>
-              <div class="comp-bar-track"><div class="comp-bar-fill y25" style="width:${(cBase / maxVal * 100)}%"></div></div>
-              <span class="val">${fmtInt(cBase)}</span>
-            </div>
-            <div class="comp-bar-line">
-              <span class="tag">atual</span>
-              <div class="comp-bar-track"><div class="comp-bar-fill y26" style="width:${(cCurr / maxVal * 100)}%"></div></div>
-              <span class="val">${fmtInt(cCurr)}</span>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    container.innerHTML = html;
-  },
-
   renderHourChart(dataBase, dataCurr, anoBase, anoCurr) {
     const hcBase = Array(24).fill(0), hcCurr = Array(24).fill(0);
-
     for (const r of dataBase) {
-      if (r.h) {
-        const hh = parseInt(r.h.slice(0, 2), 10);
-        if (!isNaN(hh)) hcBase[hh]++;
-      }
+      if (r.h) { const hh = parseInt(r.h.slice(0, 2), 10); if (!isNaN(hh)) hcBase[hh]++; }
     }
     for (const r of dataCurr) {
-      if (r.h) {
-        const hh = parseInt(r.h.slice(0, 2), 10);
-        if (!isNaN(hh)) hcCurr[hh]++;
-      }
+      if (r.h) { const hh = parseInt(r.h.slice(0, 2), 10); if (!isNaN(hh)) hcCurr[hh]++; }
     }
 
     const totBase = hcBase.reduce((a, b) => a + b, 0) || 1;
     const totCurr = hcCurr.reduce((a, b) => a + b, 0) || 1;
     const pctBase = hcBase.map(v => +(v / totBase * 100).toFixed(2));
     const pctCurr = hcCurr.map(v => +(v / totCurr * 100).toFixed(2));
-
     const hourLabels = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}h`);
 
     const ctx = document.getElementById('compHourChart').getContext('2d');
@@ -1595,76 +1360,64 @@ const Comparativo = {
       data: {
         labels: hourLabels,
         datasets: [
-          {
-            label: String(anoBase),
-            data: pctBase,
-            borderColor: '#e8a84a',
-            backgroundColor: 'rgba(232,168,74,0.08)',
-            borderWidth: 1.5,
-            borderDash: [4, 3],
-            pointRadius: 0,
-            tension: 0.35,
-            fill: false
-          },
-          {
-            label: String(anoCurr),
-            data: pctCurr,
-            borderColor: '#3fb8ab',
-            backgroundColor: 'rgba(63,184,171,0.12)',
-            borderWidth: 2,
-            pointRadius: 0,
-            tension: 0.35,
-            fill: true
-          }
+          { label: String(anoBase), data: pctBase, borderColor: '#e8a84a', backgroundColor: 'rgba(232,168,74,0.08)', borderWidth: 1.5, borderDash: [4, 3], pointRadius: 0, tension: 0.35, fill: false },
+          { label: String(anoCurr), data: pctCurr, borderColor: '#3fb8ab', backgroundColor: 'rgba(63,184,171,0.12)', borderWidth: 2, pointRadius: 0, tension: 0.35, fill: true }
         ]
       },
       options: this.chartOptions()
     });
   },
 
+  renderCompRank(containerId, dataBase, dataCurr, keyFn) {
+    const cBase = groupBy(dataBase, keyFn);
+    const cCurr = groupBy(dataCurr, keyFn);
+    const allKeys = new Set([...cBase.keys(), ...cCurr.keys()]);
+
+    const rows = [];
+    for (const k of allKeys) {
+      const vBase = cBase.get(k) || 0;
+      const vCurr = cCurr.get(k) || 0;
+      rows.push({ k, vBase, vCurr, diff: vCurr - vBase });
+    }
+
+    rows.sort((a, b) => b.vCurr - a.vCurr);
+    const top = rows.slice(0, 5);
+
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+
+    for (const r of top) {
+      let dHtml = '—';
+      if (r.vBase > 0) {
+        const p = ((r.vCurr - r.vBase) / r.vBase) * 100;
+        dHtml = `<span class="${p >= 0 ? 'delta-up' : 'delta-down'}">${p >= 0 ? '+' : ''}${p.toFixed(0)}%</span>`;
+      }
+      const el = document.createElement('div');
+      el.className = 'comp-rank-row';
+      el.innerHTML = `
+        <span class="n">${escapeHtml(titleCase(r.k))}</span>
+        <span class="v">${fmtInt(r.vBase)} → <b>${fmtInt(r.vCurr)}</b></span>
+        <span class="d">${dHtml}</span>
+      `;
+      container.appendChild(el);
+    }
+  },
+
   chartOptions() {
     return {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: {
-          display: true,
-          labels: {
-            color: '#a9b8c4',
-            boxWidth: 10,
-            font: { family: "'Inter', sans-serif", size: 11 }
-          }
-        },
+        legend: { display: false },
         tooltip: {
-          backgroundColor: '#0a1218',
-          borderColor: '#24333f',
-          borderWidth: 1,
-          titleColor: '#e7edf2',
-          bodyColor: '#e7edf2',
-          padding: 10,
+          backgroundColor: '#0a1218', borderColor: '#24333f', borderWidth: 1,
           titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
           bodyFont: { family: "'JetBrains Mono', monospace", size: 11 }
         }
       },
       scales: {
-        x: {
-          grid: { color: '#1c2a35', drawTicks: false },
-          ticks: {
-            color: '#6f8190',
-            font: { family: "'JetBrains Mono', monospace", size: 10 },
-            maxTicksLimit: 24
-          }
-        },
-        y: {
-          grid: { color: '#1c2a35' },
-          ticks: {
-            color: '#6f8190',
-            font: { family: "'JetBrains Mono', monospace", size: 10 },
-            callback: v => v + '%'
-          },
-          beginAtZero: true
-        }
+        x: { grid: { color: '#1c2a35' }, ticks: { font: { size: 10 } } },
+        y: { grid: { color: '#1c2a35' }, ticks: { font: { size: 10 } } }
       }
     };
   }
@@ -1676,19 +1429,22 @@ const Comparativo = {
 
 const LogTable = {
   render() {
-    let rows = state.filtered;
-    const q = state.log.search.trim().toLowerCase();
+    let rows = state.filtered.slice();
+    const search = (state.log.search || '').toLowerCase();
 
-    if (q) {
+    if (search) {
       rows = rows.filter(r =>
-        `${r.b} ${r.tf} ${r.end} ${r.r} ${r.bo}`.toLowerCase().includes(q)
+        (r.bo || '').toLowerCase().includes(search) ||
+        (r.tf || '').toLowerCase().includes(search) ||
+        (r.b || '').toLowerCase().includes(search) ||
+        (r.end || '').toLowerCase().includes(search)
       );
     }
 
-    // Ordenação
     const key = state.log.sortKey;
     const dir = state.log.sortDir;
-    rows = rows.slice().sort((a, b) => {
+
+    rows.sort((a, b) => {
       let av, bv;
       if (key === 'bo') {
         av = parseInt(a.bo, 10) || 0;
@@ -1711,8 +1467,8 @@ const LogTable = {
 
     const start = (state.log.page - 1) * state.log.pageSize;
     const pageRows = rows.slice(start, start + state.log.pageSize);
-
     const tbody = document.getElementById('logBody');
+    if (!tbody) return;
     tbody.innerHTML = '';
 
     if (!pageRows.length) {
@@ -1735,94 +1491,65 @@ const LogTable = {
       tbody.appendChild(frag);
     }
 
-    document.getElementById('pagerInfo').textContent = total ?
-      `${fmtInt(start + 1)}–${fmtInt(Math.min(start + pageRows.length, total))} de ${fmtInt(total)}` :
-      '0 de 0';
-
+    document.getElementById('pagerInfo').textContent = total ? `${fmtInt(start + 1)}–${fmtInt(Math.min(start + pageRows.length, total))} de ${fmtInt(total)}` : '0 de 0';
     document.getElementById('pagerPrev').disabled = state.log.page <= 1;
     document.getElementById('pagerNext').disabled = state.log.page >= totalPages;
 
-    // Indicadores de ordenação
     document.querySelectorAll('.logtable th[data-sort]').forEach(th => {
       const k = th.dataset.sort;
-      const arrow = th.querySelector('.arrow');
-      arrow.textContent = (k === key) ? (dir === 'asc' ? '↑' : '↓') : '';
+      th.classList.toggle('active', k === key);
+      th.classList.toggle('asc', k === key && dir === 'asc');
+      th.classList.toggle('desc', k === key && dir === 'desc');
     });
   },
 
   exportCsv() {
     const rows = state.filtered;
     if (!rows.length) {
-      UI.showToast('Nenhum dado', 'Não há registros para exportar.', true);
+      UI.showToast('Exportar CSV', 'Nenhum dado para exportar', true);
       return;
     }
-
-    const headers = ['Data', 'Hora', 'BO', 'Tipo Final', 'Natureza', 'Bairro', 'Regional', 'Endereço'];
-    const lines = [headers.join(';')];
-
+    let csv = '\uFEFFData;Hora;BO;Tipo Final;Bairro;Regional;Endereco\r\n';
     for (const r of rows) {
-      lines.push([
-        fmtDateBR(r.d),
-        r.h,
-        r.bo,
-        csvEscape(r.tf),
-        csvEscape(r.nat),
-        csvEscape(r.b),
-        csvEscape(r.r),
-        csvEscape(r.end)
-      ].join(';'));
+      csv += `${csvEscape(fmtDateBR(r.d))};${csvEscape(r.h)};${csvEscape(r.bo)};${csvEscape(r.tf)};${csvEscape(r.b)};${csvEscape(r.r)};${csvEscape(r.end)}\r\n`;
     }
-
-    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `ocorrencias_filtradas_${todayStamp()}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `ocorrencias_gcm_${todayStamp()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 };
 
 // ============================================================
-// 19. DASHBOARD - ORQUESTRADOR PRINCIPAL
+// 19. DASHBOARD CONTROLLER (ORCHESTRATOR)
 // ============================================================
 
 const Dashboard = {
   render() {
-    // Evitar loops de renderização
     if (state._rendering) return;
     state._rendering = true;
-    
+
     try {
-      // 1. Aplicar filtros
       const filtered = Filters.apply();
 
-      // 2. Renderizar todos os componentes com os dados filtrados
       KPI.render(filtered);
       Timeline.render(filtered);
       Heatmap.render(filtered);
 
-      // Rankings
       Ranking.render('tipoRank', filtered, r => r.tf, state.filters.tipos, this.onTipoClick);
       Ranking.render('bairroRank', filtered, r => r.b, state.filters.bairros, this.onBairroClick);
 
-      // Natureza e tabela mensal
       Natureza.render(filtered);
       MonthTable.render();
-
-      // Comparativo (usa todos os dados, não apenas filtrados por data)
       Comparativo.render();
-
-      // Log
       LogTable.render();
 
-      // Header
       UI.updateHeader();
       UI.updateTotalPill();
-
-      // Atualizar contadores dos filtros
       FilterUI.updateCounts();
     } finally {
       state._rendering = false;
@@ -1830,31 +1557,28 @@ const Dashboard = {
   },
 
   onTipoClick(name) {
-    // Se já está selecionado apenas este, desmarcar tudo
     if (state.filters.tipos !== null && state.filters.tipos.size === 1 && state.filters.tipos.has(name)) {
       state.filters.tipos = null;
     } else {
       state.filters.tipos = new Set([name]);
     }
     FilterUI.syncChecklist('tipo');
-    this.render();
+    Dashboard.render();
   },
 
   onBairroClick(name) {
-    // Se já está selecionado apenas este, desmarcar tudo
     if (state.filters.bairros !== null && state.filters.bairros.size === 1 && state.filters.bairros.has(name)) {
       state.filters.bairros = null;
     } else {
       state.filters.bairros = new Set([name]);
     }
     FilterUI.syncChecklist('bairro');
-    this.render();
+    Dashboard.render();
   },
 
   async refresh() {
     const result = await DataLoader.loadFromGoogleSheets(true);
     if (result) {
-      // Definir data range inicial
       const [minD, maxD] = getDateRange(state.all);
       Filters.setDateRange(minD, maxD);
       document.getElementById('dateFrom').value = minD || '';
@@ -1864,7 +1588,6 @@ const Dashboard = {
   },
 
   reset() {
-    // Resetar filtros - isso já chama render internamente
     Filters.reset();
   },
 
@@ -1881,71 +1604,64 @@ const Dashboard = {
       state.log.sortDir = state.log.sortDir === 'asc' ? 'desc' : 'asc';
     } else {
       state.log.sortKey = key;
-      state.log.sortDir = 'asc';
+      state.log.sortDir = 'desc';
     }
+    state.log.page = 1;
     LogTable.render();
   },
 
-  setLogPage(delta) {
-    state.log.page += delta;
+  setLogPage(dir) {
+    state.log.page += dir;
     LogTable.render();
   },
 
-  setLogSearch(query) {
-    state.log.search = query;
+  setLogSearch(q) {
+    state.log.search = q;
     state.log.page = 1;
     LogTable.render();
   }
 };
 
 // ============================================================
-// 20. EVENTOS E INICIALIZAÇÃO
+// 20. INICIALIZAÇÃO DE EVENTOS CONTROLLER
 // ============================================================
 
 function initEvents() {
-  // Sync
   document.getElementById('btnSync').addEventListener('click', () => Dashboard.refresh());
   document.getElementById('btnSyncModal').addEventListener('click', () => Dashboard.refresh());
+  document.getElementById('btnReset').addEventListener('click', () => Dashboard.reset());
+  document.getElementById('btnResetFromModal').addEventListener('click', () => Dashboard.reset());
 
-  // Modal
-  document.getElementById('btnHistory').addEventListener('click', UI.openModal);
-  document.getElementById('modalClose').addEventListener('click', UI.closeModal);
-  document.getElementById('uploadModal').addEventListener('click', (e) => {
-    if (e.target.id === 'uploadModal') UI.closeModal();
+  document.getElementById('btnOpenModal').addEventListener('click', () => UI.openModal());
+  document.getElementById('modalClose').addEventListener('click', () => UI.closeModal());
+  window.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('uploadModal')) UI.closeModal();
   });
 
-  // Reset
-  document.getElementById('btnReset').addEventListener('click', Dashboard.reset);
-  document.getElementById('btnResetFromModal').addEventListener('click', Dashboard.reset);
-
-  // Date filters
   document.getElementById('dateFrom').addEventListener('change', (e) => {
-    state.filters.dateFrom = e.target.value;
+    state.filters.dateFrom = e.target.value || null;
     Dashboard.render();
   });
   document.getElementById('dateTo').addEventListener('change', (e) => {
-    state.filters.dateTo = e.target.value;
+    state.filters.dateTo = e.target.value || null;
     Dashboard.render();
   });
-
-  // Regional
   document.getElementById('regionalSelect').addEventListener('change', (e) => {
-    state.filters.regional = e.target.value;
+    state.filters.regional = e.target.value || '';
     Dashboard.render();
   });
 
-  // Clear filters
-  document.getElementById('btnClearFilters').addEventListener('click', Dashboard.reset);
+  document.querySelectorAll('#granCtl button').forEach(b => {
+    b.addEventListener('click', () => Dashboard.setGranularity(b.dataset.g));
+  });
 
-  // Multiselect toggles
-  document.querySelectorAll('[data-toggle]').forEach(btn => {
+  document.querySelectorAll('.msel-toggle').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const id = btn.dataset.toggle;
-      const el = document.getElementById(id);
-      const wasOpen = el.classList.contains('open');
+      const p = btn.closest('.msel');
+      const open = p.classList.contains('open');
       document.querySelectorAll('.msel.open').forEach(m => m.classList.remove('open'));
-      if (!wasOpen) el.classList.add('open');
+      if (!open) p.classList.add('open');
     });
   });
 
@@ -1957,7 +1673,6 @@ function initEvents() {
     p.addEventListener('click', e => e.stopPropagation());
   });
 
-  // Multiselect items
   document.getElementById('tipoList').addEventListener('change', (e) => {
     if (e.target.matches('input[type=checkbox]')) {
       FilterUI.toggleItem('tipo', e.target.dataset.name, e.target.checked);
@@ -1970,52 +1685,38 @@ function initEvents() {
     }
   });
 
-  // Multiselect search
   document.getElementById('tipoSearch').addEventListener('input', (e) => {
     const q = e.target.value.toLowerCase();
     document.querySelectorAll('#tipoList .msel-item').forEach(row => {
-      row.style.display = row.dataset.name.includes(q) ? '' : 'none';
+      row.style.display = row.dataset.name.includes(q) ? 'flex' : 'none';
     });
   });
 
   document.getElementById('bairroSearch').addEventListener('input', (e) => {
     const q = e.target.value.toLowerCase();
     document.querySelectorAll('#bairroList .msel-item').forEach(row => {
-      row.style.display = row.dataset.name.includes(q) ? '' : 'none';
+      row.style.display = row.dataset.name.includes(q) ? 'flex' : 'none';
     });
   });
 
-  // Multiselect actions
-  document.querySelectorAll('.msel-actions button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      FilterUI.setAll(btn.dataset.target, btn.dataset.act);
-    });
-  });
+  document.getElementById('btnTipoAll').addEventListener('click', () => FilterUI.setAll('tipo', 'all'));
+  document.getElementById('btnTipoNone').addEventListener('click', () => FilterUI.setAll('tipo', 'none'));
+  document.getElementById('btnBairroAll').addEventListener('click', () => FilterUI.setAll('bairro', 'all'));
+  document.getElementById('btnBairroNone').addEventListener('click', () => FilterUI.setAll('bairro', 'none'));
 
-  // Granularity
-  document.querySelectorAll('#granCtl button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      Dashboard.setGranularity(btn.dataset.g);
-    });
-  });
-
-  // Log search (debounced)
-  document.getElementById('logSearch').addEventListener('input', debounce((e) => {
+  const logSearch = document.getElementById('logSearch');
+  logSearch.addEventListener('input', debounce((e) => {
     Dashboard.setLogSearch(e.target.value);
-  }, 220));
+  }, 250));
 
-  // Log sorting
   document.querySelectorAll('.logtable th[data-sort]').forEach(th => {
     th.addEventListener('click', () => {
       Dashboard.setLogSort(th.dataset.sort);
     });
   });
 
-  // Log pagination
   document.getElementById('pagerPrev').addEventListener('click', () => Dashboard.setLogPage(-1));
   document.getElementById('pagerNext').addEventListener('click', () => Dashboard.setLogPage(1));
-
-  // Export CSV
   document.getElementById('btnExportCsv').addEventListener('click', LogTable.exportCsv);
 }
 
@@ -2024,13 +1725,11 @@ function initEvents() {
 // ============================================================
 
 async function init() {
-  // Configurar Chart.js
   if (window.Chart) {
     Chart.defaults.font.family = "'Inter', sans-serif";
     Chart.defaults.color = '#a9b8c4';
   }
 
-  // Carregar dados da planilha
   const loaded = await DataLoader.loadFromGoogleSheets(false);
 
   if (loaded) {
@@ -2040,20 +1739,11 @@ async function init() {
     document.getElementById('dateTo').value = maxD || '';
   }
 
-  // Registrar eventos ANTES de renderizar
   initEvents();
-
-  // Renderizar dashboard
   Dashboard.render();
 
-  // Footer
   document.getElementById('footerInfo').textContent =
     'Painel de Ocorrências · dados sincronizados via Google Sheets';
 }
 
-// Iniciar quando o DOM estiver pronto
-if (document.readyState === 'complete' || document.readyState === 'interactive') {
-  init();
-} else {
-  document.addEventListener('DOMContentLoaded', init);
-}
+window.addEventListener('DOMContentLoaded', init);
