@@ -1021,48 +1021,41 @@ async function processSheetRows(rows){
     return false;
   }
 
-  // Mesclar com os dados existentes
-  const byMonth = {};
+  // A planilha "GERAL" é a fonte única e completa (todo o histórico 2025–2026
+  // vem inteiro a cada sincronização). Por isso, cada sync SUBSTITUI totalmente
+  // os dados anteriores, em vez de mesclar por uma chave Ano+BO.
+  // (BO não é um identificador único dentro do ano — o mesmo número de BO pode
+  // aparecer em ocorrências diferentes, o que fazia registros distintos se
+  // sobrescreverem e desaparecerem do painel.)
+  const previousTotal = state.all.length;
+
+  const newBuckets = {};
   for(const rec of parsed){
     const mk = rec.d.slice(0,7);
-    (byMonth[mk] = byMonth[mk] || []).push(rec);
+    (newBuckets[mk] = newBuckets[mk] || []).push(rec);
   }
-
-  let added = 0, updated = 0, noKeyCount = 0;
-  const affectedMonths = Object.keys(byMonth).sort();
-
-  for(const mk of affectedMonths){
-    const existingArr = state.monthBuckets[mk] ? state.monthBuckets[mk].slice() : [];
-    const map = new Map();
-    for(const r of existingArr) map.set(buildKey(r), r);
-    for(const rec of byMonth[mk]){
-      let key;
-      if(rec.bo){ key = buildKey(rec); }
-      else { noKeyCount++; key = `${mk}-nobo-${noKeyCount}-${Math.random().toString(36).slice(2,7)}`; }
-      if(map.has(key)){
-        const prev = map.get(key);
-        const same = prev.d===rec.d && prev.h===rec.h && prev.tf===rec.tf && prev.b===rec.b && prev.r===rec.r;
-        if(!same) updated++;
-      } else {
-        added++;
-      }
-      map.set(key, rec);
-    }
-    state.monthBuckets[mk] = Array.from(map.values());
-  }
+  state.monthBuckets = newBuckets;
+  const affectedMonths = Object.keys(newBuckets).sort();
 
   rebuildAll();
 
   // Registrar no histórico
   const nowIso = new Date().toISOString();
-  const entry = { filename: 'Google Sheets', timestamp: nowIso, added, updated, months: affectedMonths };
+  const delta = state.all.length - previousTotal;
+  const entry = {
+    filename: 'Google Sheets',
+    timestamp: nowIso,
+    added: delta > 0 ? delta : 0,
+    updated: 0,
+    months: affectedMonths
+  };
   metaInfo.uploadLog = [entry, ...((metaInfo.uploadLog)||[])].slice(0,20);
   metaInfo.lastSync = nowIso;
 
-  if(added || updated){
-    showToast('Planilha sincronizada', `${fmtInt(added)} novos · ${fmtInt(updated)} atualizados`, false);
+  if(invalid){
+    showToast('Planilha sincronizada', `${fmtInt(state.all.length)} registros carregados · ${fmtInt(invalid)} linha(s) ignorada(s) (data inválida)`, false);
   } else {
-    showToast('Planilha sincronizada', 'Nenhuma alteração detectada.', false);
+    showToast('Planilha sincronizada', `${fmtInt(state.all.length)} registros carregados`, false);
   }
 
   return true;
