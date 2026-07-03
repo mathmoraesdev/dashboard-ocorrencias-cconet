@@ -551,19 +551,29 @@ const Filters = {
 
   reset() {
     const [minD, maxD] = getDateRange(state.all);
-    state.filters.dateFrom = minD;
-    state.filters.dateTo = maxD;
-    state.filters.tipos = null;
-    state.filters.bairros = null;
+    
+    // Resetar todos os filtros
+    state.filters.dateFrom = minD || null;
+    state.filters.dateTo = maxD || null;
+    state.filters.tipos = null;          // null = todos selecionados
+    state.filters.bairros = null;        // null = todos selecionados
     state.filters.regional = '';
     state.filters.natureza = null;
 
-    // Reset UI
-    document.getElementById('dateFrom').value = minD || '';
-    document.getElementById('dateTo').value = maxD || '';
-    document.getElementById('regionalSelect').value = '';
+    // Sincronizar UI
+    const dateFromEl = document.getElementById('dateFrom');
+    const dateToEl = document.getElementById('dateTo');
+    const regionalEl = document.getElementById('regionalSelect');
+    
+    if (dateFromEl) dateFromEl.value = minD || '';
+    if (dateToEl) dateToEl.value = maxD || '';
+    if (regionalEl) regionalEl.value = '';
 
+    // Reconstruir checklists e atualizar contadores
     FilterUI.refreshChecklists();
+
+    // Aplicar filtros e renderizar
+    Dashboard.render();
   },
 
   setDateRange(from, to) {
@@ -572,6 +582,7 @@ const Filters = {
   }
 };
 
+// ============================================================
 // ============================================================
 // 9. UI - FILTERS
 // ============================================================
@@ -609,6 +620,8 @@ const FilterUI = {
 
   buildList(listId, countsMap, target) {
     const container = document.getElementById(listId);
+    if (!container) return;
+    
     const activeSet = target === 'tipo' ? state.filters.tipos : state.filters.bairros;
     const sorted = Array.from(countsMap.entries()).sort((a, b) => b[1] - a[1]);
 
@@ -646,11 +659,15 @@ const FilterUI = {
     const tipoEl = document.getElementById('tipoCount');
     const bairroEl = document.getElementById('bairroCount');
 
-    const tipoSet = state.filters.tipos;
-    const bairroSet = state.filters.bairros;
-
-    tipoEl.textContent = tipoSet === null ? 'todos' : `${tipoSet.size} sel.`;
-    bairroEl.textContent = bairroSet === null ? 'todos' : `${bairroSet.size} sel.`;
+    if (tipoEl) {
+      const tipoSet = state.filters.tipos;
+      tipoEl.textContent = tipoSet === null ? 'todos' : `${tipoSet.size} sel.`;
+    }
+    
+    if (bairroEl) {
+      const bairroSet = state.filters.bairros;
+      bairroEl.textContent = bairroSet === null ? 'todos' : `${bairroSet.size} sel.`;
+    }
   },
 
   toggleItem(target, name, checked) {
@@ -671,13 +688,20 @@ const FilterUI = {
 
   setAll(target, mode) {
     const key = target === 'tipo' ? 'tipos' : 'bairros';
-    state.filters[key] = (mode === 'all') ? null : new Set();
+    
+    if (mode === 'all') {
+      state.filters[key] = null; // null = todos selecionados
+    } else {
+      state.filters[key] = new Set(); // vazio = nenhum selecionado
+    }
 
+    // Reconstruir a lista visual
     this.buildList(
       target === 'tipo' ? 'tipoList' : 'bairroList',
       target === 'tipo' ? caches.tipoCounts : caches.bairroCounts,
       target
     );
+    
     this.updateCounts();
     Dashboard.render();
   },
@@ -1778,9 +1802,9 @@ const Dashboard = {
   },
 
   reset() {
+    // Resetar filtros e atualizar UI
     Filters.reset();
-    FilterUI.refreshChecklists();
-    this.render();
+    // O reset já chama render(), então não precisa chamar novamente
   },
 
   setGranularity(gran) {
