@@ -570,9 +570,9 @@ footer .reset-link:hover{color:var(--rose);}
     <div style="height:260px;"><canvas id="timelineChart"></canvas></div>
   </div>
 
-  <!-- Comparativo 2025 x 2026 -->
+  <!-- Comparativo anual (dinâmico, baseado nos anos presentes na planilha + filtros ativos) -->
   <div class="section-title">
-    <span class="eyebrow">2025 × 2026</span>
+    <span class="eyebrow" id="compYearsEyebrow">—</span>
     <h2>Comparativo anual</h2>
     <div class="line"></div>
   </div>
@@ -583,8 +583,8 @@ footer .reset-link:hover{color:var(--rose);}
     </div>
     <div class="comp-kpis" id="compKpis"></div>
     <div class="comp-legend" style="margin-top:16px;">
-      <span><i class="y25"></i>2025</span>
-      <span><i class="y26"></i>2026</span>
+      <span><i class="y25"></i><span id="legendYearBase">—</span></span>
+      <span><i class="y26"></i><span id="legendYearCurr">—</span></span>
     </div>
     <div style="height:230px; margin-top:10px;"><canvas id="compMonthChart"></canvas></div>
   </div>
@@ -592,15 +592,15 @@ footer .reset-link:hover{color:var(--rose);}
   <div class="grid-2" style="margin-top:14px;">
     <div class="card">
       <div class="card-head">
-        <h3>Tipo Final — 2025 vs 2026</h3>
-        <span class="hint">mesmo período do ano</span>
+        <h3>Tipo Final — <span id="tipoCompYearsLabel">—</span></h3>
+        <span class="hint">mesmo período do ano · respeita os filtros ativos</span>
       </div>
       <div id="compTipoList"></div>
     </div>
     <div class="card">
       <div class="card-head">
-        <h3>Bairro — 2025 vs 2026</h3>
-        <span class="hint">mesmo período do ano</span>
+        <h3>Bairro — <span id="bairroCompYearsLabel">—</span></h3>
+        <span class="hint">mesmo período do ano · respeita os filtros ativos</span>
       </div>
       <div id="compBairroList"></div>
     </div>
@@ -608,7 +608,7 @@ footer .reset-link:hover{color:var(--rose);}
 
   <div class="card" style="margin-top:14px;">
     <div class="card-head">
-      <h3>Distribuição por hora — 2025 vs 2026</h3>
+      <h3>Distribuição por hora — <span id="hourCompYearsLabel">—</span></h3>
       <span class="hint">% do total, mesmo período do ano</span>
     </div>
     <div style="height:220px;"><canvas id="compHourChart"></canvas></div>
@@ -785,9 +785,7 @@ footer .reset-link:hover{color:var(--rose);}
 // Escolha "Documento inteiro" e "CSV" → Copie a URL gerada
 const GOOGLE_SHEETS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQc9Z1rDFqIOl_mbJZWIGlvfp6afWsQNiHTlAPKnuVhvJDMj1RpRXkU8r2Pt19x7PKvjfjc_4ssreiS/pub?output=csv';
 
-// Dados de fallback (carga inicial embutida)
-const EMBEDDED_DATA = [/* ... seus dados iniciais ... */];
-const EMBEDDED_DATA_2025 = [/* ... dados de 2025 ... */];
+// Dados de fallback (carga inicial embutida) — deixado vazio: a fonte de dados é 100% a planilha do Google Sheets (colunas "Ano" 2025/2026 no mesmo "GERAL").
 
 // ---------- CONSTANTES ----------
 const WEEKDAYS_PT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
@@ -987,8 +985,8 @@ function buildFieldLookup(keyMap){
   const pick = (...names) => { for(const n of names) if(keyMap[n] !== undefined) return keyMap[n]; return undefined; };
   const fl = {};
   const map = { bo:pick('bo','numero bo'), ano:pick('ano'), data:pick('data'), hora:pick('hora','ocorrencia'),
-    tf:pick('tipo final'), nat:pick('natureza'), b:pick('bairro'), r:pick('regional'),
-    end:pick('endereco'), st:pick('sub tipo ocorrencia'), vtr:pick('vtr principal') };
+    tf:pick('tipo final'), nat:pick('natureza final','natureza'), b:pick('bairro'), r:pick('regional'),
+    end:pick('endereco completo','endereco'), st:pick('sub tipo ocorrencia'), vtr:pick('vtr principal') };
   for(const k of Object.keys(map)) if(map[k] !== undefined) fl[k] = map[k];
   return fl;
 }
@@ -1021,51 +1019,59 @@ async function processSheetRows(rows){
     return false;
   }
 
-  // A planilha "GERAL" é a fonte única e completa (todo o histórico 2025–2026
-  // vem inteiro a cada sincronização). Por isso, cada sync SUBSTITUI totalmente
-  // os dados anteriores, em vez de mesclar por uma chave Ano+BO.
-  // (BO não é um identificador único dentro do ano — o mesmo número de BO pode
-  // aparecer em ocorrências diferentes, o que fazia registros distintos se
-  // sobrescreverem e desaparecerem do painel.)
-  const previousTotal = state.all.length;
-
-  const newBuckets = {};
+  // Mesclar com os dados existentes
+  const byMonth = {};
   for(const rec of parsed){
     const mk = rec.d.slice(0,7);
-    (newBuckets[mk] = newBuckets[mk] || []).push(rec);
+    (byMonth[mk] = byMonth[mk] || []).push(rec);
   }
-  state.monthBuckets = newBuckets;
-  const affectedMonths = Object.keys(newBuckets).sort();
+
+  let added = 0, updated = 0, noKeyCount = 0;
+  const affectedMonths = Object.keys(byMonth).sort();
+
+  for(const mk of affectedMonths){
+    const existingArr = state.monthBuckets[mk] ? state.monthBuckets[mk].slice() : [];
+    const map = new Map();
+    for(const r of existingArr) map.set(buildKey(r), r);
+    for(const rec of byMonth[mk]){
+      let key;
+      if(rec.bo){ key = buildKey(rec); }
+      else { noKeyCount++; key = `${mk}-nobo-${noKeyCount}-${Math.random().toString(36).slice(2,7)}`; }
+      if(map.has(key)){
+        const prev = map.get(key);
+        const same = prev.d===rec.d && prev.h===rec.h && prev.tf===rec.tf && prev.b===rec.b && prev.r===rec.r;
+        if(!same) updated++;
+      } else {
+        added++;
+      }
+      map.set(key, rec);
+    }
+    state.monthBuckets[mk] = Array.from(map.values());
+  }
 
   rebuildAll();
 
+  // IMPORTANTE: sempre reconstruir as opções de filtro (Tipo Final, Bairro, Regional) e re-renderizar
+  // depois de qualquer carga de dados — seja a carga inicial ou uma sincronização manual.
+  // Sem isso, tipos/bairros novos (ou a primeira carga bem-sucedida) não apareciam nos filtros.
+  refreshFilterOptions();
+  applyFiltersAndRender();
+  updatePeriodLabel();
+  updateTotalPill();
+
   // Registrar no histórico
   const nowIso = new Date().toISOString();
-  const delta = state.all.length - previousTotal;
-  const entry = {
-    filename: 'Google Sheets',
-    timestamp: nowIso,
-    added: delta > 0 ? delta : 0,
-    updated: 0,
-    months: affectedMonths
-  };
+  const entry = { filename: 'Google Sheets', timestamp: nowIso, added, updated, months: affectedMonths };
   metaInfo.uploadLog = [entry, ...((metaInfo.uploadLog)||[])].slice(0,20);
   metaInfo.lastSync = nowIso;
 
-  if(invalid){
-    showToast('Planilha sincronizada', `${fmtInt(state.all.length)} registros carregados · ${fmtInt(invalid)} linha(s) ignorada(s) (data inválida)`, false);
+  if(added || updated){
+    showToast('Planilha sincronizada', `${fmtInt(added)} novos · ${fmtInt(updated)} atualizados`, false);
   } else {
-    showToast('Planilha sincronizada', `${fmtInt(state.all.length)} registros carregados`, false);
+    showToast('Planilha sincronizada', 'Nenhuma alteração detectada.', false);
   }
 
   return true;
-}
-
-// ---------- DADOS EMBUTIDOS (FALLBACK) ----------
-function loadEmbeddedData() {
-  // Aqui você coloca os dados iniciais que estavam no arquivo
-  // (o array EMBEDDED_DATA e EMBEDDED_DATA_2025)
-  // Por brevidade, estou mantendo a referência, mas no código final você cola os arrays
 }
 
 function rebuildAll(){
@@ -1076,24 +1082,12 @@ function rebuildAll(){
 
 // ---------- CARREGAMENTO INICIAL ----------
 async function bootstrap(){
-  // Tentar carregar da planilha primeiro
+  // Toda a fonte de dados é a planilha do Google Sheets (aba "GERAL", com a coluna "Ano" trazendo 2025/2026 juntos).
   const loaded = await loadFromGoogleSheets(false);
 
   if(!loaded || state.all.length === 0) {
-    // Fallback: usar dados embutidos
-    console.log('Carregando dados embutidos (fallback)...');
-    // Aqui você deve ter os dados embutidos
-    // Por enquanto, vamos criar alguns dados de exemplo
-    state.monthBuckets = {};
-    // Você precisa popular state.monthBuckets com os dados do arquivo
-    // Por simplicidade, estou usando a estrutura que já existia no código anterior
-    // Na prática, você vai copiar o array EMBEDDED_DATA e popular os buckets
-
-    // Exemplo rápido (substitua com seus dados reais):
-    // for(const r of EMBEDDED_DATA) {
-    //   const mk = r.d.slice(0,7);
-    //   (state.monthBuckets[mk] = state.monthBuckets[mk] || []).push(r);
-    // }
+    console.warn('Não foi possível carregar dados da planilha do Google Sheets.');
+    state.monthBuckets = state.monthBuckets || {};
     rebuildAll();
   }
 
