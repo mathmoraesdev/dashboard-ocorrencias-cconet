@@ -78,7 +78,9 @@ const state = {
   // Histórico de sincronização
   uploadLog: [],
   // Última sincronização
-  lastSync: null
+  lastSync: null,
+  // Flag para evitar loops
+  _rendering: false
 };
 
 // Caches para componentes
@@ -525,12 +527,22 @@ const Filters = {
     const { dateFrom, dateTo, tipos, bairros, regional, natureza } = state.filters;
 
     state.filtered = state.all.filter(r => {
+      // Filtro de data
       if (dateFrom && r.d < dateFrom) return false;
       if (dateTo && r.d > dateTo) return false;
-      if (tipos && !tipos.has(r.tf)) return false;
-      if (bairros && !bairros.has(r.b)) return false;
+      
+      // Filtro de regional
       if (regional && r.r !== regional) return false;
+      
+      // Filtro de natureza
       if (natureza && r.nat !== natureza) return false;
+      
+      // Filtro de tipo - null = todos, Set = apenas os selecionados
+      if (tipos !== null && !tipos.has(r.tf)) return false;
+      
+      // Filtro de bairro - null = todos, Set = apenas os selecionados
+      if (bairros !== null && !bairros.has(r.b)) return false;
+      
       return true;
     });
 
@@ -541,10 +553,10 @@ const Filters = {
     const { tipos, bairros, regional, natureza } = state.filters;
 
     return state.all.filter(r => {
-      if (tipos && !tipos.has(r.tf)) return false;
-      if (bairros && !bairros.has(r.b)) return false;
       if (regional && r.r !== regional) return false;
       if (natureza && r.nat !== natureza) return false;
+      if (tipos !== null && !tipos.has(r.tf)) return false;
+      if (bairros !== null && !bairros.has(r.b)) return false;
       return true;
     });
   },
@@ -560,7 +572,7 @@ const Filters = {
     state.filters.regional = '';
     state.filters.natureza = null;
 
-    // Sincronizar UI
+    // Sincronizar UI - campos de data
     const dateFromEl = document.getElementById('dateFrom');
     const dateToEl = document.getElementById('dateTo');
     const regionalEl = document.getElementById('regionalSelect');
@@ -579,10 +591,18 @@ const Filters = {
   setDateRange(from, to) {
     state.filters.dateFrom = from;
     state.filters.dateTo = to;
+  },
+  
+  // Utilitário para verificar se um filtro está ativo
+  isFilterActive(key) {
+    const value = state.filters[key];
+    if (key === 'regional') return value !== '';
+    if (key === 'natureza') return value !== null;
+    if (key === 'tipos' || key === 'bairros') return value !== null;
+    return false;
   }
 };
 
-// ============================================================
 // ============================================================
 // 9. UI - FILTERS
 // ============================================================
@@ -591,6 +611,8 @@ const FilterUI = {
   refreshOptions() {
     // Regional select
     const regSel = document.getElementById('regionalSelect');
+    if (!regSel) return;
+    
     const currentVal = regSel.value;
     regSel.innerHTML = '<option value="">Regional: todas</option>';
 
@@ -622,7 +644,16 @@ const FilterUI = {
     const container = document.getElementById(listId);
     if (!container) return;
     
-    const activeSet = target === 'tipo' ? state.filters.tipos : state.filters.bairros;
+    // Obter o conjunto ativo
+    let activeSet = target === 'tipo' ? state.filters.tipos : state.filters.bairros;
+    
+    // Se for null, significa "todos selecionados" - criar um Set com todos os nomes
+    const allNames = new Set(countsMap.keys());
+    const isAllSelected = (activeSet === null);
+    
+    // Para exibição, usamos o conjunto real ou o conjunto de todos
+    const displaySet = isAllSelected ? allNames : activeSet;
+    
     const sorted = Array.from(countsMap.entries()).sort((a, b) => b[1] - a[1]);
 
     const frag = document.createDocumentFragment();
@@ -631,7 +662,7 @@ const FilterUI = {
       row.className = 'msel-item';
       row.dataset.name = name.toLowerCase();
 
-      const checked = !activeSet || activeSet.has(name);
+      const checked = displaySet ? displaySet.has(name) : false;
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = checked;
@@ -661,12 +692,20 @@ const FilterUI = {
 
     if (tipoEl) {
       const tipoSet = state.filters.tipos;
-      tipoEl.textContent = tipoSet === null ? 'todos' : `${tipoSet.size} sel.`;
+      if (tipoSet === null) {
+        tipoEl.textContent = 'todos';
+      } else {
+        tipoEl.textContent = `${tipoSet.size} sel.`;
+      }
     }
     
     if (bairroEl) {
       const bairroSet = state.filters.bairros;
-      bairroEl.textContent = bairroSet === null ? 'todos' : `${bairroSet.size} sel.`;
+      if (bairroSet === null) {
+        bairroEl.textContent = 'todos';
+      } else {
+        bairroEl.textContent = `${bairroSet.size} sel.`;
+      }
     }
   },
 
@@ -674,12 +713,21 @@ const FilterUI = {
     const key = target === 'tipo' ? 'tipos' : 'bairros';
     const allNames = new Set((target === 'tipo' ? caches.tipoCounts : caches.bairroCounts).keys());
 
+    // Se current é null, começar com todos os nomes
     let cur = state.filters[key];
-    cur = cur === null ? new Set(allNames) : new Set(cur);
+    if (cur === null) {
+      cur = new Set(allNames);
+    } else {
+      cur = new Set(cur);
+    }
 
-    if (checked) cur.add(name);
-    else cur.delete(name);
+    if (checked) {
+      cur.add(name);
+    } else {
+      cur.delete(name);
+    }
 
+    // Se todos estão selecionados, guardar como null para economizar memória
     state.filters[key] = (cur.size === allNames.size) ? null : cur;
 
     this.updateCounts();
@@ -1739,38 +1787,47 @@ const LogTable = {
 
 const Dashboard = {
   render() {
-    // 1. Aplicar filtros
-    const filtered = Filters.apply();
+    // Evitar loops de renderização
+    if (state._rendering) return;
+    state._rendering = true;
+    
+    try {
+      // 1. Aplicar filtros
+      const filtered = Filters.apply();
 
-    // 2. Renderizar todos os componentes com os dados filtrados
-    KPI.render(filtered);
-    Timeline.render(filtered);
-    Heatmap.render(filtered);
+      // 2. Renderizar todos os componentes com os dados filtrados
+      KPI.render(filtered);
+      Timeline.render(filtered);
+      Heatmap.render(filtered);
 
-    // Rankings
-    Ranking.render('tipoRank', filtered, r => r.tf, state.filters.tipos, this.onTipoClick);
-    Ranking.render('bairroRank', filtered, r => r.b, state.filters.bairros, this.onBairroClick);
+      // Rankings
+      Ranking.render('tipoRank', filtered, r => r.tf, state.filters.tipos, this.onTipoClick);
+      Ranking.render('bairroRank', filtered, r => r.b, state.filters.bairros, this.onBairroClick);
 
-    // Natureza e tabela mensal
-    Natureza.render(filtered);
-    MonthTable.render();
+      // Natureza e tabela mensal
+      Natureza.render(filtered);
+      MonthTable.render();
 
-    // Comparativo (usa todos os dados, não apenas filtrados por data)
-    Comparativo.render();
+      // Comparativo (usa todos os dados, não apenas filtrados por data)
+      Comparativo.render();
 
-    // Log
-    LogTable.render();
+      // Log
+      LogTable.render();
 
-    // Header
-    UI.updateHeader();
-    UI.updateTotalPill();
+      // Header
+      UI.updateHeader();
+      UI.updateTotalPill();
 
-    // Atualizar contadores dos filtros
-    FilterUI.updateCounts();
+      // Atualizar contadores dos filtros
+      FilterUI.updateCounts();
+    } finally {
+      state._rendering = false;
+    }
   },
 
   onTipoClick(name) {
-    if (state.filters.tipos && state.filters.tipos.size === 1 && state.filters.tipos.has(name)) {
+    // Se já está selecionado apenas este, desmarcar tudo
+    if (state.filters.tipos !== null && state.filters.tipos.size === 1 && state.filters.tipos.has(name)) {
       state.filters.tipos = null;
     } else {
       state.filters.tipos = new Set([name]);
@@ -1780,7 +1837,8 @@ const Dashboard = {
   },
 
   onBairroClick(name) {
-    if (state.filters.bairros && state.filters.bairros.size === 1 && state.filters.bairros.has(name)) {
+    // Se já está selecionado apenas este, desmarcar tudo
+    if (state.filters.bairros !== null && state.filters.bairros.size === 1 && state.filters.bairros.has(name)) {
       state.filters.bairros = null;
     } else {
       state.filters.bairros = new Set([name]);
@@ -1802,9 +1860,8 @@ const Dashboard = {
   },
 
   reset() {
-    // Resetar filtros e atualizar UI
+    // Resetar filtros - isso já chama render internamente
     Filters.reset();
-    // O reset já chama render(), então não precisa chamar novamente
   },
 
   setGranularity(gran) {
@@ -1979,11 +2036,11 @@ async function init() {
     document.getElementById('dateTo').value = maxD || '';
   }
 
+  // Registrar eventos ANTES de renderizar
+  initEvents();
+
   // Renderizar dashboard
   Dashboard.render();
-
-  // Registrar eventos
-  initEvents();
 
   // Footer
   document.getElementById('footerInfo').textContent =
