@@ -18,7 +18,7 @@
   <div class="topbar">
     <div class="brand">
       <div class="brand-mark">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M12 2L4 5.5V11c0 5.2 3.4 9.9 8 11 4.6-1.1 8-5.8 8-11V5.5L12 2z" stroke="#062522" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12l2 2 4-4.5" stroke="#062522" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <img src="logo.png" alt="Brasão GCM">
       </div>
       <div class="brand-text">
         <h1>Painel de Ocorrências</h1>
@@ -64,9 +64,21 @@
   <div class="filterbar">
     <span class="flabel">Filtros</span>
     <div class="datefield">
-      <input type="date" id="dateFrom">
+      <div class="dateinput-wrap">
+        <input type="text" id="dateFrom" class="date-text" inputmode="numeric" placeholder="DD/MM/AAAA" maxlength="10" autocomplete="off">
+        <input type="date" id="dateFromPicker" class="date-native" tabindex="-1" aria-hidden="true">
+        <button type="button" class="date-cal-btn" data-for="dateFrom" aria-label="Abrir calendário">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="16" rx="2.2" stroke="currentColor" stroke-width="1.7"/><path d="M3.5 9.5h17M8 3v3.6M16 3v3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        </button>
+      </div>
       <span>→</span>
-      <input type="date" id="dateTo">
+      <div class="dateinput-wrap">
+        <input type="text" id="dateTo" class="date-text" inputmode="numeric" placeholder="DD/MM/AAAA" maxlength="10" autocomplete="off">
+        <input type="date" id="dateToPicker" class="date-native" tabindex="-1" aria-hidden="true">
+        <button type="button" class="date-cal-btn" data-for="dateTo" aria-label="Abrir calendário">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="16" rx="2.2" stroke="currentColor" stroke-width="1.7"/><path d="M3.5 9.5h17M8 3v3.6M16 3v3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        </button>
+      </div>
     </div>
 
     <div class="msel" id="mselTipo">
