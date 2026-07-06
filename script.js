@@ -329,6 +329,133 @@ function isOfficialBairro(name) {
 let _rowCounter = 0;
 
 // ============================================================
+// 4.1 MÁSCARA DE DATA (dd/mm/aaaa) COM SUPORTE A DIGITAÇÃO E CALENDÁRIO
+// ============================================================
+
+const DateMask = {
+  toBR(iso) {
+    if (!iso) return '';
+    const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return '';
+    return `${m[3]}/${m[2]}/${m[1]}`;
+  },
+
+  toISO(br) {
+    if (!br) return null;
+    const m = String(br).trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!m) return null;
+    const day = parseInt(m[1], 10), month = parseInt(m[2], 10), year = parseInt(m[3], 10);
+    if (month < 1 || month > 12) return null;
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (day < 1 || day > daysInMonth) return null;
+    if (year < 1900 || year > 2200) return null;
+    return `${m[3]}-${m[2]}-${m[1]}`;
+  },
+
+  applyMask(raw) {
+    const digits = raw.replace(/\D/g, '').slice(0, 8);
+    if (digits.length > 4) return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+    if (digits.length > 2) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    return digits;
+  },
+
+  // Liga um <input type="text"> mascarado a um <input type="date"> auxiliar
+  // (usado para abrir o calendário nativo) e dispara onChange(isoOuNull)
+  // sempre que uma data válida e completa é digitada ou escolhida.
+  // nextInputId (opcional): ao completar uma data válida, o foco pula
+  // automaticamente para esse campo, já com o cursor no início, permitindo
+  // digitação contínua e rápida do período (data inicial → data final).
+  attach(textInputId, pickerInputId, onChange, nextInputId) {
+    const textEl = document.getElementById(textInputId);
+    const pickerEl = document.getElementById(pickerInputId);
+    if (!textEl) return;
+
+    // Ao focar (clique, tab, etc.), seleciona todo o texto do campo, para
+    // que o primeiro dígito digitado já substitua qualquer data existente,
+    // permitindo começar a digitar imediatamente sem precisar apagar antes.
+    const selectAllOnFocus = (e) => {
+      requestAnimationFrame(() => {
+        try { e.target.setSelectionRange(0, e.target.value.length); } catch (_) {}
+      });
+    };
+    textEl.addEventListener('focus', selectAllOnFocus);
+    textEl.addEventListener('mouseup', (e) => {
+      // Evita que o comportamento padrão do clique (que colocaria o cursor
+      // no ponto clicado) sobrescreva a seleção logo após o foco.
+      e.preventDefault();
+      selectAllOnFocus(e);
+    });
+
+    textEl.addEventListener('input', (e) => {
+      const atEnd = e.target.selectionEnd === e.target.value.length;
+      const masked = DateMask.applyMask(e.target.value);
+      const wasComplete = masked.length === 10;
+      e.target.value = masked;
+      if (atEnd) {
+        try { e.target.setSelectionRange(masked.length, masked.length); } catch (_) {}
+      }
+
+      if (masked.length === 0) {
+        if (pickerEl) pickerEl.value = '';
+        onChange(null);
+        return;
+      }
+
+      const iso = DateMask.toISO(masked);
+      if (iso) {
+        if (pickerEl) pickerEl.value = iso;
+        onChange(iso);
+
+        // Data completa e válida: avança automaticamente para o próximo
+        // campo (ex.: de "data inicial" para "data final"), já com o
+        // cursor no início, mantendo a digitação rápida.
+        if (wasComplete && nextInputId) {
+          const nextEl = document.getElementById(nextInputId);
+          if (nextEl) {
+            nextEl.focus();
+            try { nextEl.setSelectionRange(0, nextEl.value.length); } catch (_) {}
+          }
+        }
+      }
+    });
+
+    textEl.addEventListener('blur', (e) => {
+      const val = e.target.value.trim();
+      if (val === '') return;
+      const iso = DateMask.toISO(val);
+      if (!iso) {
+        // Data incompleta ou inválida: reverte para o último valor válido
+        e.target.value = pickerEl && pickerEl.value ? DateMask.toBR(pickerEl.value) : '';
+      }
+    });
+
+    if (pickerEl) {
+      pickerEl.addEventListener('change', (e) => {
+        const iso = e.target.value || null;
+        textEl.value = DateMask.toBR(iso);
+        onChange(iso);
+      });
+    }
+  },
+
+  setValue(textInputId, pickerInputId, iso) {
+    const textEl = document.getElementById(textInputId);
+    const pickerEl = document.getElementById(pickerInputId);
+    if (textEl) textEl.value = DateMask.toBR(iso);
+    if (pickerEl) pickerEl.value = iso || '';
+  }
+};
+
+function openDatePicker(pickerId) {
+  const picker = document.getElementById(pickerId);
+  if (!picker) return;
+  if (typeof picker.showPicker === 'function') {
+    try { picker.showPicker(); return; } catch (_) {}
+  }
+  picker.click();
+}
+
+// ============================================================
 // 5. PARSER DE DADOS
 // ============================================================
 
@@ -646,14 +773,12 @@ const Filters = {
     state.filters.natureza = null;
     state.filters.bairroOficial = false;
 
-    const dateFromEl = document.getElementById('dateFrom');
-    const dateToEl = document.getElementById('dateTo');
     const regionalEl = document.getElementById('regionalSelect');
     const bairroOficialEl = document.getElementById('bairroOficialToggle');
     const bairroOficialWrapEl = document.getElementById('bairroOficialWrap');
     
-    if (dateFromEl) dateFromEl.value = minD || '';
-    if (dateToEl) dateToEl.value = maxD || '';
+    DateMask.setValue('dateFrom', 'dateFromPicker', minD || null);
+    DateMask.setValue('dateTo', 'dateToPicker', maxD || null);
     if (regionalEl) regionalEl.value = '';
     if (bairroOficialEl) bairroOficialEl.checked = false;
     if (bairroOficialWrapEl) bairroOficialWrapEl.classList.remove('active');
@@ -1799,8 +1924,8 @@ const Dashboard = {
     if (result) {
       const [minD, maxD] = getDateRange(state.all);
       Filters.setDateRange(minD, maxD);
-      document.getElementById('dateFrom').value = minD || '';
-      document.getElementById('dateTo').value = maxD || '';
+      DateMask.setValue('dateFrom', 'dateFromPicker', minD || null);
+      DateMask.setValue('dateTo', 'dateToPicker', maxD || null);
       this.render();
     }
   },
@@ -1857,13 +1982,16 @@ function initEvents() {
     if (e.target === document.getElementById('uploadModal')) UI.closeModal();
   });
 
-  document.getElementById('dateFrom').addEventListener('change', (e) => {
-    state.filters.dateFrom = e.target.value || null;
+  DateMask.attach('dateFrom', 'dateFromPicker', (iso) => {
+    state.filters.dateFrom = iso;
+    Dashboard.render();
+  }, 'dateTo');
+  DateMask.attach('dateTo', 'dateToPicker', (iso) => {
+    state.filters.dateTo = iso;
     Dashboard.render();
   });
-  document.getElementById('dateTo').addEventListener('change', (e) => {
-    state.filters.dateTo = e.target.value || null;
-    Dashboard.render();
+  document.querySelectorAll('.date-cal-btn').forEach(btn => {
+    btn.addEventListener('click', () => openDatePicker(btn.dataset.for + 'Picker'));
   });
   document.getElementById('regionalSelect').addEventListener('change', (e) => {
     state.filters.regional = e.target.value || '';
@@ -1964,8 +2092,8 @@ async function init() {
   if (loaded) {
     const [minD, maxD] = getDateRange(state.all);
     Filters.setDateRange(minD, maxD);
-    document.getElementById('dateFrom').value = minD || '';
-    document.getElementById('dateTo').value = maxD || '';
+    DateMask.setValue('dateFrom', 'dateFromPicker', minD || null);
+    DateMask.setValue('dateTo', 'dateToPicker', maxD || null);
   }
 
   initEvents();
