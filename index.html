@@ -26,6 +26,15 @@
       </div>
     </div>
     <div class="topbar-right">
+      <div class="theme-toggle" id="themeToggle" title="Alternar tema">
+        <div class="knob"></div>
+        <button type="button" data-theme-btn="dark" aria-label="Tema escuro">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        </button>
+        <button type="button" data-theme-btn="light" aria-label="Tema claro">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.3M12 19.2v2.3M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.5 12h2.3M19.2 12h2.3M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
       <div class="sync-status" id="syncStatus">
         <span class="dot loading" id="syncDot"></span>
         <span id="syncLabel">carregando...</span>
@@ -144,7 +153,7 @@
   <div class="card">
     <div class="card-head"><h3>Dia da semana × Hora do dia</h3><span class="hint">passe o mouse sobre uma célula para ver o total</span></div>
     <div class="heatwrap">
-      <div class="heat-main"><div class="heat-grid" id="heatGrid"></div><div class="heat-legend"><span>menos</span><span class="sw" style="background:var(--surface-2)"></span><span class="sw" style="background:#1d4a48"></span><span class="sw" style="background:#2a7a71"></span><span class="sw" style="background:#3fb8ab"></span><span class="sw" style="background:#e8a84a"></span><span>mais</span></div></div>
+      <div class="heat-main"><div class="heat-grid" id="heatGrid"></div><div class="heat-legend" id="heatLegend"><span>menos</span><span class="sw" data-hl="0"></span><span class="sw" data-hl="1"></span><span class="sw" data-hl="2"></span><span class="sw" data-hl="3"></span><span class="sw" data-hl="4"></span><span>mais</span></div></div>
       <div class="heat-side">
         <div class="heat-stat"><div class="l">Hora de pico</div><div class="v" id="heatPeakHour">—</div></div>
         <div class="heat-stat"><div class="l">Dia da semana de pico</div><div class="v" id="heatPeakDay">—</div></div>
