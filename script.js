@@ -1142,7 +1142,11 @@ const Timeline = {
     } else if (gran === 'week') {
       const m = groupBy(filtered, r => weekKey(r.d));
       weekKeys = Array.from(m.keys()).sort();
-      labels = weekKeys.map(fmtWeekRange);
+      labels = weekKeys.map(k => {
+      const dt = parseISODate(k);
+      const dow = WEEKDAYS_PT[dt.getUTCDay()];
+      return `${dow} ${fmtDateShort(k)}`;
+      });
       dataPoints = weekKeys.map(k => m.get(k));
       type = 'bar';
     } else {
