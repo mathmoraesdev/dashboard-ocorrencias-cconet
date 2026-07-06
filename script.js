@@ -1045,7 +1045,7 @@ const UI = {
       el.textContent = 'sem dados carregados';
       return;
     }
-    el.innerHTML = `${fmtDateBR(minD)} — ${fmtDateBR(maxD)}<span class="dot">·</span>${Object.keys(state.monthBuckets).length} mês(es)`;
+    el.innerHTML = `${fmtDateBR(minD)} — ${fmtDateBR(maxD)}`;
   },
 
   updateTotalPill() {
