@@ -199,8 +199,38 @@ button{font-family:inherit;}
 .toggle-chip:hover{border-color:var(--accent-dim);}
 .toggle-chip input{accent-color:var(--accent); cursor:pointer;}
 .toggle-chip.active{border-color:var(--accent); color:var(--text); background:var(--accent-glow);}
-.chip-clear{margin-left:auto; display:flex; align-items:center; gap:6px;color:var(--text-dim); font-size:12px; cursor:pointer; padding:6px 10px; border-radius:var(--radius-sm);}
-.chip-clear:hover{color:var(--rose); background:rgba(217,112,95,0.08);}
+.chip-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .1s ease;
+  font-family: var(--font-body);
+  margin-left: auto;
+}
+
+.chip-clear:hover {
+  background: var(--surface-hover);
+  border-color: var(--rose);
+  color: var(--rose);
+}
+
+.chip-clear:active {
+  transform: translateY(1px);
+}
+
+.chip-clear svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
 
 /* SECTIONS & CARDS */
 .section-title{display:flex; align-items:baseline; gap:10px; margin:26px 0 12px;}
