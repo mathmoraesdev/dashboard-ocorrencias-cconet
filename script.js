@@ -809,6 +809,38 @@ const KPI = {
     const avg = days > 0 ? total / days : 0;
     document.getElementById('kpiAvg').textContent = avg.toFixed(1).replace('.', ',');
     document.getElementById('kpiAvgSub').textContent = days > 0 ? `em ${fmtInt(days)} dias` : '—';
+
+    // Horário de pico
+    const hourCounts = Array(24).fill(0);
+    for (const r of filtered) {
+      if (!r.h) continue;
+      const hh = parseInt(r.h.slice(0, 2), 10);
+      if (!isNaN(hh) && hh >= 0 && hh <= 23) hourCounts[hh]++;
+    }
+    let peakH = -1, peakV = 0;
+    for (let h = 0; h < 24; h++) {
+      if (hourCounts[h] > peakV) { peakV = hourCounts[h]; peakH = h; }
+    }
+    const kpiPeakHourEl = document.getElementById('kpiPeakHour');
+    const kpiPeakHourSubEl = document.getElementById('kpiPeakHourSub');
+    if (kpiPeakHourEl) kpiPeakHourEl.textContent = peakH >= 0 ? `${String(peakH).padStart(2, '0')}:00` : '—';
+    if (kpiPeakHourSubEl) kpiPeakHourSubEl.textContent = peakV > 0 ? `${fmtInt(peakV)} ocorrências` : '—';
+
+    // Bairro mais acionado
+    const bairroCounts = groupBy(filtered, r => r.b);
+    const topBairro = Array.from(bairroCounts.entries()).sort((a, b) => b[1] - a[1])[0];
+    const kpiTopBairroEl = document.getElementById('kpiTopBairro');
+    const kpiTopBairroSubEl = document.getElementById('kpiTopBairroSub');
+    if (kpiTopBairroEl) kpiTopBairroEl.textContent = topBairro ? titleCase(topBairro[0]) : '—';
+    if (kpiTopBairroSubEl) kpiTopBairroSubEl.textContent = topBairro ? `${fmtInt(topBairro[1])} ocorrências` : '—';
+
+    // Tipo Final mais frequente
+    const tipoCounts = groupBy(filtered, r => r.tf);
+    const topTipo = Array.from(tipoCounts.entries()).sort((a, b) => b[1] - a[1])[0];
+    const kpiTopTipoEl = document.getElementById('kpiTopTipo');
+    const kpiTopTipoSubEl = document.getElementById('kpiTopTipoSub');
+    if (kpiTopTipoEl) kpiTopTipoEl.textContent = topTipo ? titleCase(topTipo[0]) : '—';
+    if (kpiTopTipoSubEl) kpiTopTipoSubEl.textContent = topTipo ? `${fmtInt(topTipo[1])} ocorrências` : '—';
   }
 };
 
@@ -1058,15 +1090,15 @@ const Ranking = {
     for (const [name, count] of top) {
       const p = maxVal > 0 ? (count / maxVal * 100) : 0;
       const row = document.createElement('div');
-      row.className = 'rank-row';
+      row.className = 'rankbar-row';
       if (activeSet && activeSet.has(name)) row.classList.add('active');
 
       row.innerHTML = `
-        <div class="rank-info">
-          <span class="n">${escapeHtml(titleCase(name))}</span>
-          <span class="v">${fmtInt(count)}</span>
+        <div class="rankbar-top">
+          <span class="name">${escapeHtml(titleCase(name))}</span>
+          <span class="val">${fmtInt(count)}</span>
         </div>
-        <div class="rank-bar-bg"><div class="rank-bar" style="width:${p}%"></div></div>
+        <div class="rankbar-track"><div class="rankbar-fill" style="width:${p}%"></div></div>
       `;
 
       if (onClick) {
@@ -1077,11 +1109,11 @@ const Ranking = {
 
     if (restSum > 0) {
       const row = document.createElement('div');
-      row.className = 'rank-row rest';
+      row.className = 'rankbar-row rest';
       row.innerHTML = `
-        <div class="rank-info">
-          <span class="n">Outros (${sorted.length - topN})</span>
-          <span class="v">${fmtInt(restSum)}</span>
+        <div class="rankbar-top">
+          <span class="name">Outros (${sorted.length - topN})</span>
+          <span class="val">${fmtInt(restSum)}</span>
         </div>
       `;
       frag.appendChild(row);
@@ -1250,16 +1282,39 @@ const Comparativo = {
 
     const anoBase = anosArray[0];
     const anoCurr = anosArray[anosArray.length - 1];
-    const mesesPresentes = new Set();
 
-    for (const r of allData) {
-      if (r.ano === anoCurr) {
-        mesesPresentes.add(monthOf(r.d));
+    // Se o usuário escolheu um período nos filtros de data, usamos os meses
+    // desse período como janela da comparação (permite comparar, por exemplo,
+    // só Jan-Mar, ou um Tipo Final específico só naquele intervalo).
+    // Sem período escolhido, cai no comportamento padrão: todos os meses com
+    // dados no ano mais recente.
+    const mesesPresentes = new Set();
+    const { dateFrom, dateTo } = state.filters;
+
+    if (dateFrom && dateTo) {
+      const mIni = monthOf(dateFrom);
+      const mFim = monthOf(dateTo);
+      if (mIni <= mFim) {
+        for (let m = mIni; m <= mFim; m++) mesesPresentes.add(m);
+      } else {
+        // período atravessa a virada do ano (ex.: Nov -> Fev)
+        for (let m = mIni; m <= 12; m++) mesesPresentes.add(m);
+        for (let m = 1; m <= mFim; m++) mesesPresentes.add(m);
+      }
+    } else {
+      for (const r of allData) {
+        if (r.ano === anoCurr) {
+          mesesPresentes.add(monthOf(r.d));
+        }
       }
     }
 
     const rangeLbl = this.monthRangeLabel(mesesPresentes);
-    hint.textContent = `mesmo período (${rangeLbl}) comparado entre ${anoBase} e ${anoCurr}`;
+    const tipoSet = state.filters.tipos;
+    const tipoLabel = (tipoSet && tipoSet.size === 1)
+      ? ` · Tipo Final: ${titleCase(Array.from(tipoSet)[0])}`
+      : '';
+    hint.textContent = `mesmo período (${rangeLbl}) comparado entre ${anoBase} e ${anoCurr}${tipoLabel}`;
 
     document.getElementById('legendYearBase').textContent = anoBase;
     document.getElementById('legendYearCurr').textContent = anoCurr;
@@ -1632,7 +1687,8 @@ function initEvents() {
   document.getElementById('btnReset').addEventListener('click', () => Dashboard.reset());
   document.getElementById('btnResetFromModal').addEventListener('click', () => Dashboard.reset());
 
-  document.getElementById('btnOpenModal').addEventListener('click', () => UI.openModal());
+  document.getElementById('btnHistory').addEventListener('click', () => UI.openModal());
+  document.getElementById('btnClearFilters').addEventListener('click', () => Dashboard.reset());
   document.getElementById('modalClose').addEventListener('click', () => UI.closeModal());
   window.addEventListener('click', (e) => {
     if (e.target === document.getElementById('uploadModal')) UI.closeModal();
@@ -1655,7 +1711,7 @@ function initEvents() {
     b.addEventListener('click', () => Dashboard.setGranularity(b.dataset.g));
   });
 
-  document.querySelectorAll('.msel-toggle').forEach(btn => {
+  document.querySelectorAll('.msel-btn[data-toggle]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const p = btn.closest('.msel');
@@ -1699,10 +1755,13 @@ function initEvents() {
     });
   });
 
-  document.getElementById('btnTipoAll').addEventListener('click', () => FilterUI.setAll('tipo', 'all'));
-  document.getElementById('btnTipoNone').addEventListener('click', () => FilterUI.setAll('tipo', 'none'));
-  document.getElementById('btnBairroAll').addEventListener('click', () => FilterUI.setAll('bairro', 'all'));
-  document.getElementById('btnBairroNone').addEventListener('click', () => FilterUI.setAll('bairro', 'none'));
+  document.querySelectorAll('.msel-actions').forEach(box => {
+    box.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      FilterUI.setAll(btn.dataset.target, btn.dataset.act);
+    });
+  });
 
   const logSearch = document.getElementById('logSearch');
   logSearch.addEventListener('input', debounce((e) => {
