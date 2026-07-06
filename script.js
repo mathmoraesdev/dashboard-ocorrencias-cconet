@@ -211,6 +211,20 @@ function monthKeyLabel(mk) {
   return `${MONTHS_FULL_PT[parseInt(p[1], 10) - 1]}/${p[0]}`;
 }
 
+// Recebe a segunda-feira (ISO) de uma semana e devolve um rótulo com o
+// intervalo completo, ex: "06–12 jul" ou "29 jun–05 jul" quando a semana
+// cruza o mês. Assim fica claro qual período de dias cada coluna representa.
+function fmtWeekRange(mondayISO) {
+  const start = parseISODate(mondayISO);
+  const end = addDays(start, 6);
+  const sDay = String(start.getUTCDate()).padStart(2, '0');
+  const eDay = String(end.getUTCDate()).padStart(2, '0');
+  const sMonth = MONTHS_PT[start.getUTCMonth()];
+  const eMonth = MONTHS_PT[end.getUTCMonth()];
+  if (sMonth === eMonth) return `${sDay}–${eDay} ${eMonth}`;
+  return `${sDay} ${sMonth}–${eDay} ${eMonth}`;
+}
+
 function titleCase(s) {
   if (!s) return '';
   return s.toLowerCase().split(' ').map((w, i) =>
@@ -370,21 +384,16 @@ const DateMask = {
     const pickerEl = document.getElementById(pickerInputId);
     if (!textEl) return;
 
-    // Ao focar (clique, tab, etc.), seleciona todo o texto do campo, para
-    // que o primeiro dígito digitado já substitua qualquer data existente,
-    // permitindo começar a digitar imediatamente sem precisar apagar antes.
-    const selectAllOnFocus = (e) => {
-      requestAnimationFrame(() => {
-        try { e.target.setSelectionRange(0, e.target.value.length); } catch (_) {}
-      });
+    // Ao focar (clique, tab, etc.), limpa o texto visível do campo para que
+    // o usuário possa digitar a nova data do zero, sem precisar apagar nada.
+    // O período/filtro atual continua valendo por baixo dos panos — só é
+    // trocado quando uma nova data completa e válida for digitada. Se o
+    // campo for deixado vazio (blur sem digitar nada), o valor anterior
+    // volta a aparecer.
+    const clearOnFocus = (e) => {
+      e.target.value = '';
     };
-    textEl.addEventListener('focus', selectAllOnFocus);
-    textEl.addEventListener('mouseup', (e) => {
-      // Evita que o comportamento padrão do clique (que colocaria o cursor
-      // no ponto clicado) sobrescreva a seleção logo após o foco.
-      e.preventDefault();
-      selectAllOnFocus(e);
-    });
+    textEl.addEventListener('focus', clearOnFocus);
 
     textEl.addEventListener('input', (e) => {
       const atEnd = e.target.selectionEnd === e.target.value.length;
@@ -421,10 +430,10 @@ const DateMask = {
 
     textEl.addEventListener('blur', (e) => {
       const val = e.target.value.trim();
-      if (val === '') return;
       const iso = DateMask.toISO(val);
       if (!iso) {
-        // Data incompleta ou inválida: reverte para o último valor válido
+        // Campo vazio, incompleto ou inválido: reverte para o último valor
+        // válido (o período por trás nunca chegou a ser alterado).
         e.target.value = pickerEl && pickerEl.value ? DateMask.toBR(pickerEl.value) : '';
       }
     });
@@ -1124,6 +1133,7 @@ const Timeline = {
     let labels = [], dataPoints = [], maPoints = [];
     let type = 'line';
 
+    let weekKeys = null;
     if (gran === 'day') {
       const series = this.buildDailySeries(filtered, state.filters.dateFrom, state.filters.dateTo);
       labels = series.map(s => fmtDateShort(s.d));
@@ -1131,9 +1141,10 @@ const Timeline = {
       maPoints = dataPoints.length ? movingAverage(dataPoints, 7) : [];
     } else if (gran === 'week') {
       const m = groupBy(filtered, r => weekKey(r.d));
-      const keys = Array.from(m.keys()).sort();
-      labels = keys.map(fmtDateShort);
-      dataPoints = keys.map(k => m.get(k));
+      weekKeys = Array.from(m.keys()).sort();
+      labels = weekKeys.map(fmtWeekRange);
+      dataPoints = weekKeys.map(k => m.get(k));
+      type = 'bar';
     } else {
       const m = groupBy(filtered, r => r.d.slice(0, 7));
       const keys = Array.from(m.keys()).sort();
