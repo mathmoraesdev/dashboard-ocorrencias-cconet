@@ -14,16 +14,23 @@ const CONFIG = {
   SHEET_URL: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQc9Z1rDFqIOl_mbJZWIGlvfp6afWsQNiHTlAPKnuVhvJDMj1RpRXkU8r2Pt19x7PKvjfjc_4ssreiS/pub?output=csv',
   LOG_PAGE_SIZE: 50,
   RANK_TOP_N: 12,
-  HEATMAP_COLORS: [
-    [22, 35, 44],
-    [29, 74, 72],
-    [42, 122, 113],
-    [63, 184, 171],
-    [232, 168, 74]
+  HEATMAP_COLORS_DARK: [
+    [27, 38, 87],
+    [42, 56, 104],
+    [122, 96, 40],
+    [180, 138, 30],
+    [212, 160, 23]
+  ],
+  HEATMAP_COLORS_LIGHT: [
+    [233, 230, 215],
+    [214, 205, 170],
+    [200, 165, 90],
+    [180, 130, 40],
+    [26, 42, 94]
   ],
   NATUREZA_COLORS: [
-    '#3fb8ab', '#e8a84a', '#6f9bd1', '#d9705f', '#8a7fd6',
-    '#6fbf6f', '#d68fc4', '#c9c15a', '#5fb8d6', '#b48a5f'
+    '#d4a017', '#1a2a5e', '#2e7d46', '#b5262c', '#6f9bd1',
+    '#8a7fd6', '#c9915a', '#5fb8d6', '#9a6fd6', '#4a8f6f'
   ],
   // Lista oficial de bairros de São Leopoldo/RS. Usada para filtrar
   // registros com nomes de bairro divergentes/incorretos vindos da fonte.
@@ -39,6 +46,61 @@ const CONFIG = {
 // ============================================================
 // 2. CONSTANTES
 // ============================================================
+
+// ============================================================
+// 1b. TEMA (claro/escuro)
+// ============================================================
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function hexToRgba(hex, alpha) {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const r = parseInt(full.substring(0, 2), 16);
+  const g = parseInt(full.substring(2, 4), 16);
+  const b = parseInt(full.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+const Theme = {
+  STORAGE_KEY: 'painel_gcm_theme',
+
+  init() {
+    const saved = localStorage.getItem(this.STORAGE_KEY);
+    const theme = saved === 'light' ? 'light' : 'dark';
+    this.apply(theme, false);
+
+    document.querySelectorAll('[data-theme-btn]').forEach(btn => {
+      btn.addEventListener('click', () => this.apply(btn.dataset.themeBtn, true));
+    });
+  },
+
+  apply(theme, shouldRerender) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem(this.STORAGE_KEY, theme);
+
+    document.querySelectorAll('[data-theme-btn]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.themeBtn === theme);
+    });
+
+    Chart.defaults.color = cssVar('--text-mid');
+    Chart.defaults.font.family = "'Inter', sans-serif";
+
+    if (shouldRerender && typeof Dashboard !== 'undefined') {
+      Dashboard.render();
+    }
+  },
+
+  isLight() {
+    return document.documentElement.getAttribute('data-theme') === 'light';
+  },
+
+  heatmapColors() {
+    return this.isLight() ? CONFIG.HEATMAP_COLORS_LIGHT : CONFIG.HEATMAP_COLORS_DARK;
+  }
+};
 
 const WEEKDAYS_PT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const MONTHS_PT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -944,11 +1006,12 @@ const Timeline = {
       type = 'bar';
     }
 
+    const accent = cssVar('--accent');
     const datasets = [{
       label: 'Ocorrências',
       data: dataPoints,
-      borderColor: '#3fb8ab',
-      backgroundColor: type === 'bar' ? 'rgba(63,184,171,0.55)' : 'rgba(63,184,171,0.12)',
+      borderColor: accent,
+      backgroundColor: type === 'bar' ? hexToRgba(accent, 0.55) : hexToRgba(accent, 0.12),
       fill: type !== 'bar',
       tension: 0.3,
       pointRadius: 0,
@@ -961,7 +1024,7 @@ const Timeline = {
       datasets.push({
         label: 'Média móvel (7 dias)',
         data: maPoints,
-        borderColor: '#e8a84a',
+        borderColor: cssVar('--amber'),
         borderWidth: 1.5,
         borderDash: [4, 3],
         pointRadius: 0,
@@ -979,18 +1042,18 @@ const Timeline = {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: '#0a1218',
-            borderColor: '#24333f',
+            backgroundColor: cssVar('--tooltip-bg'),
+            borderColor: cssVar('--tooltip-border'),
             borderWidth: 1,
-            titleColor: '#e7edf2',
-            bodyColor: '#e7edf2',
+            titleColor: '#eef1f8',
+            bodyColor: '#eef1f8',
             titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
             bodyFont: { family: "'JetBrains Mono', monospace", size: 11 }
           }
         },
         scales: {
-          x: { grid: { color: '#1c2a35' }, ticks: { maxRotation: 0, font: { size: 10 } } },
-          y: { grid: { color: '#1c2a35' }, ticks: { font: { size: 10 } }, beginAtZero: true }
+          x: { grid: { color: cssVar('--border-soft') }, ticks: { maxRotation: 0, font: { size: 10 } } },
+          y: { grid: { color: cssVar('--border-soft') }, ticks: { font: { size: 10 } }, beginAtZero: true }
         }
       }
     });
@@ -1081,10 +1144,10 @@ const Heatmap = {
   },
 
   getColor(v, max) {
-    if (!v) return 'rgb(22, 35, 44)';
-    if (!max) return 'rgb(22, 35, 44)';
+    if (!v) return cssVar('--heat-empty');
+    if (!max) return cssVar('--heat-empty');
     const pct = v / max;
-    const colors = CONFIG.HEATMAP_COLORS;
+    const colors = Theme.heatmapColors();
     const idx = Math.min(Math.floor(pct * (colors.length - 1)), colors.length - 2);
     const c1 = colors[idx], c2 = colors[idx + 1];
     const base = idx / (colors.length - 1);
@@ -1876,9 +1939,11 @@ function initEvents() {
 // ============================================================
 
 async function init() {
+  Theme.init();
+
   if (window.Chart) {
     Chart.defaults.font.family = "'Inter', sans-serif";
-    Chart.defaults.color = '#a9b8c4';
+    Chart.defaults.color = cssVar('--text-mid');
   }
 
   const loaded = await DataLoader.loadFromGoogleSheets(false);
