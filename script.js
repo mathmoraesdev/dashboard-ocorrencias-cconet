@@ -24,6 +24,15 @@ const CONFIG = {
   NATUREZA_COLORS: [
     '#3fb8ab', '#e8a84a', '#6f9bd1', '#d9705f', '#8a7fd6',
     '#6fbf6f', '#d68fc4', '#c9c15a', '#5fb8d6', '#b48a5f'
+  ],
+  // Lista oficial de bairros de São Leopoldo/RS. Usada para filtrar
+  // registros com nomes de bairro divergentes/incorretos vindos da fonte.
+  OFFICIAL_BAIRROS: [
+    'Arroio da Manteiga', 'Boa Vista', 'Campestre', 'Campina', 'Centro',
+    'Cristo Rei', 'Duque de Caxias', 'Fazenda São Borja', 'Feitoria', 'Fião',
+    'Jardim América', 'Morro do Espelho', 'Padre Reus', 'Pinheiro', 'Rio Branco',
+    'Rio dos Sinos', 'Santa Tereza', 'Santo André', 'Santos Dumont',
+    'São João Batista', 'São José', 'São Miguel', 'Scharlau', 'Vicentina'
   ]
 };
 
@@ -54,7 +63,8 @@ const state = {
     tipos: null,        // null = todos, Set = selecionados
     bairros: null,      // null = todos, Set = selecionados
     regional: '',
-    natureza: null
+    natureza: null,
+    bairroOficial: false // true = considera apenas bairros da lista oficial de São Leopoldo
   },
   // Controles de visualização
   view: {
@@ -224,6 +234,22 @@ function csvEscape(s) {
   if (s === null || s === undefined) return '';
   const str = String(s);
   return /[;"\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+}
+
+function normalizeBairroName(s) {
+  if (!s) return '';
+  return String(s)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+const OFFICIAL_BAIRROS_SET = new Set(CONFIG.OFFICIAL_BAIRROS.map(normalizeBairroName));
+
+function isOfficialBairro(name) {
+  return OFFICIAL_BAIRROS_SET.has(normalizeBairroName(name));
 }
 
 // Variable for unique row keys inside closure scope
@@ -487,10 +513,17 @@ const Metadata = {
     state.meta.naturezas = Array.from(naturezas).sort();
 
     caches.tipoCounts = groupBy(state.all, r => r.tf);
-    caches.bairroCounts = groupBy(state.all, r => r.b);
+    caches.bairroCounts = this.computeBairroCounts();
     caches.naturezaCounts = groupBy(state.all, r => r.nat);
 
     FilterUI.refreshOptions();
+  },
+
+  computeBairroCounts() {
+    const rows = state.filters.bairroOficial
+      ? state.all.filter(r => isOfficialBairro(r.b))
+      : state.all;
+    return groupBy(rows, r => r.b);
   }
 };
 
@@ -500,7 +533,7 @@ const Metadata = {
 
 const Filters = {
   apply() {
-    const { dateFrom, dateTo, tipos, bairros, regional, natureza } = state.filters;
+    const { dateFrom, dateTo, tipos, bairros, regional, natureza, bairroOficial } = state.filters;
 
     state.filtered = state.all.filter(r => {
       if (dateFrom && r.d < dateFrom) return false;
@@ -509,6 +542,7 @@ const Filters = {
       if (natureza && r.nat !== natureza) return false;
       if (tipos !== null && !tipos.has(r.tf)) return false;
       if (bairros !== null && !bairros.has(r.b)) return false;
+      if (bairroOficial && !isOfficialBairro(r.b)) return false;
       return true;
     });
 
@@ -516,13 +550,14 @@ const Filters = {
   },
 
   applyIgnoringDate() {
-    const { tipos, bairros, regional, natureza } = state.filters;
+    const { tipos, bairros, regional, natureza, bairroOficial } = state.filters;
 
     return state.all.filter(r => {
       if (regional && r.r !== regional) return false;
       if (natureza && r.nat !== natureza) return false;
       if (tipos !== null && !tipos.has(r.tf)) return false;
       if (bairros !== null && !bairros.has(r.b)) return false;
+      if (bairroOficial && !isOfficialBairro(r.b)) return false;
       return true;
     });
   },
@@ -536,15 +571,21 @@ const Filters = {
     state.filters.bairros = null;
     state.filters.regional = '';
     state.filters.natureza = null;
+    state.filters.bairroOficial = false;
 
     const dateFromEl = document.getElementById('dateFrom');
     const dateToEl = document.getElementById('dateTo');
     const regionalEl = document.getElementById('regionalSelect');
+    const bairroOficialEl = document.getElementById('bairroOficialToggle');
+    const bairroOficialWrapEl = document.getElementById('bairroOficialWrap');
     
     if (dateFromEl) dateFromEl.value = minD || '';
     if (dateToEl) dateToEl.value = maxD || '';
     if (regionalEl) regionalEl.value = '';
+    if (bairroOficialEl) bairroOficialEl.checked = false;
+    if (bairroOficialWrapEl) bairroOficialWrapEl.classList.remove('active');
 
+    Metadata.refresh();
     FilterUI.refreshChecklists();
     Dashboard.render();
   },
@@ -559,6 +600,7 @@ const Filters = {
     if (key === 'regional') return value !== '';
     if (key === 'natureza') return value !== null;
     if (key === 'tipos' || key === 'bairros') return value !== null;
+    if (key === 'bairroOficial') return value === true;
     return false;
   }
 };
@@ -702,6 +744,14 @@ const FilterUI = {
       target
     );
     this.updateCounts();
+  },
+
+  setBairroOficial(checked) {
+    state.filters.bairroOficial = checked;
+    state.filters.bairros = null; // reset seleção, pois o universo de opções mudou
+    caches.bairroCounts = Metadata.computeBairroCounts();
+    this.refreshChecklists();
+    Dashboard.render();
   }
 };
 
@@ -1227,6 +1277,7 @@ const MonthTable = {
         if (state.filters.bairros !== null && !state.filters.bairros.has(r.b)) return false;
         if (state.filters.regional && r.r !== state.filters.regional) return false;
         if (state.filters.natureza && r.nat !== state.filters.natureza) return false;
+        if (state.filters.bairroOficial && !isOfficialBairro(r.b)) return false;
         return true;
       });
 
@@ -1343,8 +1394,8 @@ const Comparativo = {
 
     this.renderMonthChart(dataBase, dataCurr, anoBase, anoCurr, mesesPresentes);
     this.renderHourChart(dataBase, dataCurr, anoBase, anoCurr);
-    this.renderCompRank('compTipoList', dataBase, dataCurr, r => r.tf);
-    this.renderCompRank('compBairroList', dataBase, dataCurr, r => r.b);
+    this.renderCompRank('compTipoList', dataBase, dataCurr, r => r.tf, anoBase, anoCurr);
+    this.renderCompRank('compBairroList', dataBase, dataCurr, r => r.b, anoBase, anoCurr);
   },
 
   monthRangeLabel(monthSet) {
@@ -1423,7 +1474,7 @@ const Comparativo = {
     });
   },
 
-  renderCompRank(containerId, dataBase, dataCurr, keyFn) {
+  renderCompRank(containerId, dataBase, dataCurr, keyFn, anoBase, anoCurr, topN = 8) {
     const cBase = groupBy(dataBase, keyFn);
     const cCurr = groupBy(dataCurr, keyFn);
     const allKeys = new Set([...cBase.keys(), ...cCurr.keys()]);
@@ -1432,30 +1483,66 @@ const Comparativo = {
     for (const k of allKeys) {
       const vBase = cBase.get(k) || 0;
       const vCurr = cCurr.get(k) || 0;
-      rows.push({ k, vBase, vCurr, diff: vCurr - vBase });
+      rows.push({ k, vBase, vCurr });
     }
 
     rows.sort((a, b) => b.vCurr - a.vCurr);
-    const top = rows.slice(0, 5);
+    const top = rows.slice(0, topN);
 
     const container = document.getElementById(containerId);
+    if (!container) return;
     container.innerHTML = '';
 
-    for (const r of top) {
-      let dHtml = '—';
-      if (r.vBase > 0) {
-        const p = ((r.vCurr - r.vBase) / r.vBase) * 100;
-        dHtml = `<span class="${p >= 0 ? 'delta-up' : 'delta-down'}">${p >= 0 ? '+' : ''}${p.toFixed(0)}%</span>`;
-      }
-      const el = document.createElement('div');
-      el.className = 'comp-rank-row';
-      el.innerHTML = `
-        <span class="n">${escapeHtml(titleCase(r.k))}</span>
-        <span class="v">${fmtInt(r.vBase)} → <b>${fmtInt(r.vCurr)}</b></span>
-        <span class="d">${dHtml}</span>
-      `;
-      container.appendChild(el);
+    if (!top.length) {
+      container.innerHTML = Ranking.emptyState();
+      return;
     }
+
+    const maxVal = top.reduce((m, r) => Math.max(m, r.vBase, r.vCurr), 0) || 1;
+    const tagBase = String(anoBase);
+    const tagCurr = String(anoCurr);
+
+    const frag = document.createDocumentFragment();
+    for (const r of top) {
+      let deltaHtml, deltaClass;
+      if (r.vBase === 0 && r.vCurr > 0) {
+        deltaHtml = 'novo';
+        deltaClass = 'delta-new';
+      } else if (r.vBase > 0) {
+        const p = ((r.vCurr - r.vBase) / r.vBase) * 100;
+        deltaClass = p >= 0 ? 'delta-up' : 'delta-down';
+        deltaHtml = `${p >= 0 ? '+' : ''}${p.toFixed(0)}%`;
+      } else {
+        deltaHtml = '—';
+        deltaClass = '';
+      }
+
+      const pBase = maxVal > 0 ? (r.vBase / maxVal * 100) : 0;
+      const pCurr = maxVal > 0 ? (r.vCurr / maxVal * 100) : 0;
+
+      const el = document.createElement('div');
+      el.className = 'comp-row';
+      el.innerHTML = `
+        <div class="comp-row-head">
+          <span class="name">${escapeHtml(titleCase(r.k))}</span>
+          <span class="delta ${deltaClass}">${deltaHtml}</span>
+        </div>
+        <div class="comp-bars">
+          <div class="comp-bar-line">
+            <span class="tag">${tagBase}</span>
+            <div class="comp-bar-track"><div class="comp-bar-fill y25" style="width:${pBase}%"></div></div>
+            <span class="val">${fmtInt(r.vBase)}</span>
+          </div>
+          <div class="comp-bar-line">
+            <span class="tag">${tagCurr}</span>
+            <div class="comp-bar-track"><div class="comp-bar-fill y26" style="width:${pCurr}%"></div></div>
+            <span class="val">${fmtInt(r.vCurr)}</span>
+          </div>
+        </div>
+      `;
+      frag.appendChild(el);
+    }
+    container.appendChild(frag);
   },
 
   chartOptions() {
@@ -1705,6 +1792,11 @@ function initEvents() {
   document.getElementById('regionalSelect').addEventListener('change', (e) => {
     state.filters.regional = e.target.value || '';
     Dashboard.render();
+  });
+
+  document.getElementById('bairroOficialToggle').addEventListener('change', (e) => {
+    document.getElementById('bairroOficialWrap').classList.toggle('active', e.target.checked);
+    FilterUI.setBairroOficial(e.target.checked);
   });
 
   document.querySelectorAll('#granCtl button').forEach(b => {
