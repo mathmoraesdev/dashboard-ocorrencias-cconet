@@ -15,22 +15,23 @@ const CONFIG = {
   LOG_PAGE_SIZE: 50,
   RANK_TOP_N: 12,
   HEATMAP_COLORS_DARK: [
-    [27, 38, 87],
-    [42, 56, 104],
-    [122, 96, 40],
-    [180, 138, 30],
-    [212, 160, 23]
+    [26, 39, 68],
+    [61, 89, 145],
+    [94, 160, 255],
+    [201, 147, 43],
+    [245, 185, 66]
   ],
   HEATMAP_COLORS_LIGHT: [
-    [233, 230, 215],
-    [214, 205, 170],
-    [200, 165, 90],
-    [180, 130, 40],
-    [26, 42, 94]
+    [238, 243, 251],
+    [206, 221, 245],
+    [201, 147, 43],
+    [245, 185, 66],
+    [47, 111, 237]
   ],
-  NATUREZA_COLORS: [
-    '#d4a017', '#1a2a5e', '#2e7d46', '#b5262c', '#6f9bd1',
-    '#8a7fd6', '#c9915a', '#5fb8d6', '#9a6fd6', '#4a8f6f'
+  // Tons extras usados além das cores semânticas (accent/amber/success/rose)
+  // quando há mais categorias de natureza do que cores base disponíveis.
+  NATUREZA_EXTRA_COLORS: [
+    '#8b7cf6', '#5fc9c9', '#c98bd6', '#7f93c9', '#d68f5f', '#6fb88a'
   ],
   // Lista oficial de bairros de São Leopoldo/RS. Usada para filtrar
   // registros com nomes de bairro divergentes/incorretos vindos da fonte.
@@ -99,6 +100,16 @@ const Theme = {
 
   heatmapColors() {
     return this.isLight() ? CONFIG.HEATMAP_COLORS_LIGHT : CONFIG.HEATMAP_COLORS_DARK;
+  },
+
+  // Paleta categórica viva: lê as cores semânticas atuais (que mudam com o
+  // tema) e completa com os tons extras para categorias adicionais.
+  naturezaPalette() {
+    return [
+      cssVar('--accent'), cssVar('--amber'), cssVar('--success'), cssVar('--rose'),
+      cssVar('--accent-dim'), cssVar('--amber-dim'),
+      ...CONFIG.NATUREZA_EXTRA_COLORS
+    ];
   }
 };
 
@@ -1250,7 +1261,8 @@ const Natureza = {
     const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
     const labels = sorted.map(s => s[0]);
     const data = sorted.map(s => s[1]);
-    const colors = labels.map((_, i) => CONFIG.NATUREZA_COLORS[i % CONFIG.NATUREZA_COLORS.length]);
+    const palette = Theme.naturezaPalette();
+    const colors = labels.map((_, i) => palette[i % palette.length]);
     const canvas = document.getElementById('naturezaChart');
     if (!canvas) return;
 
@@ -1267,7 +1279,7 @@ const Natureza = {
       type: 'doughnut',
       data: {
         labels,
-        datasets: [{ data, backgroundColor: colors, borderColor: '#141f2a', borderWidth: 2 }]
+        datasets: [{ data, backgroundColor: colors, borderColor: cssVar('--surface'), borderWidth: 2 }]
       },
       options: {
         responsive: true,
@@ -1276,11 +1288,11 @@ const Natureza = {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: '#0a1218',
-            borderColor: '#24333f',
+            backgroundColor: cssVar('--tooltip-bg'),
+            borderColor: cssVar('--tooltip-border'),
             borderWidth: 1,
-            titleColor: '#e7edf2',
-            bodyColor: '#e7edf2',
+            titleColor: '#eef1f8',
+            bodyColor: '#eef1f8',
             titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
             bodyFont: { family: "'JetBrains Mono', monospace", size: 11 }
           }
@@ -1496,8 +1508,8 @@ const Comparativo = {
       data: {
         labels: MONTHS_PT,
         datasets: [
-          { label: String(anoBase), data: dataBaseArr, backgroundColor: 'rgba(232,168,74,0.55)', borderRadius: 3, maxBarThickness: 26 },
-          { label: String(anoCurr), data: dataCurrArr, backgroundColor: 'rgba(63,184,171,0.55)', borderRadius: 3, maxBarThickness: 26 }
+          { label: String(anoBase), data: dataBaseArr, backgroundColor: hexToRgba(cssVar('--amber'), 0.55), borderRadius: 3, maxBarThickness: 26 },
+          { label: String(anoCurr), data: dataCurrArr, backgroundColor: hexToRgba(cssVar('--accent'), 0.55), borderRadius: 3, maxBarThickness: 26 }
         ]
       },
       options: this.chartOptions()
@@ -1529,8 +1541,8 @@ const Comparativo = {
       data: {
         labels: hourLabels,
         datasets: [
-          { label: String(anoBase), data: pctBase, borderColor: '#e8a84a', backgroundColor: 'rgba(232,168,74,0.08)', borderWidth: 1.5, borderDash: [4, 3], pointRadius: 0, tension: 0.35, fill: false },
-          { label: String(anoCurr), data: pctCurr, borderColor: '#3fb8ab', backgroundColor: 'rgba(63,184,171,0.12)', borderWidth: 2, pointRadius: 0, tension: 0.35, fill: true }
+          { label: String(anoBase), data: pctBase, borderColor: cssVar('--amber'), backgroundColor: hexToRgba(cssVar('--amber'), 0.08), borderWidth: 1.5, borderDash: [4, 3], pointRadius: 0, tension: 0.35, fill: false },
+          { label: String(anoCurr), data: pctCurr, borderColor: cssVar('--accent'), backgroundColor: hexToRgba(cssVar('--accent'), 0.12), borderWidth: 2, pointRadius: 0, tension: 0.35, fill: true }
         ]
       },
       options: this.chartOptions()
@@ -1615,14 +1627,15 @@ const Comparativo = {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#0a1218', borderColor: '#24333f', borderWidth: 1,
+          backgroundColor: cssVar('--tooltip-bg'), borderColor: cssVar('--tooltip-border'), borderWidth: 1,
+          titleColor: '#eef1f8', bodyColor: '#eef1f8',
           titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
           bodyFont: { family: "'JetBrains Mono', monospace", size: 11 }
         }
       },
       scales: {
-        x: { grid: { color: '#1c2a35' }, ticks: { font: { size: 10 } } },
-        y: { grid: { color: '#1c2a35' }, ticks: { font: { size: 10 } } }
+        x: { grid: { color: cssVar('--border-soft') }, ticks: { font: { size: 10 } } },
+        y: { grid: { color: cssVar('--border-soft') }, ticks: { font: { size: 10 } } }
       }
     };
   }
